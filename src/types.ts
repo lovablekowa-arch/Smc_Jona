@@ -1,0 +1,208 @@
+export type MarketCategory = 'CRYPTO' | 'FOREX' | 'COMMODITIES' | 'SYNTHETICS';
+
+export type SignalDirection = 'BUY' | 'SELL';
+
+export type ConfluenceGrade = 'SNIPER' | 'MEDIUM' | 'WATCHLIST';
+
+export interface TimeframeTrend {
+  timeframe: '1D' | '4H' | '30M' | '15M' | '1H';
+  bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  structure: 'HH/HL' | 'LH/LL' | 'RANGING';
+  emaAlignment: boolean;
+}
+
+export interface FVGVolumeBin {
+  price: number;
+  volume: number;
+  isPOC: boolean;
+  ratio: number;
+}
+
+export interface FVGInfo {
+  type: 'BULLISH' | 'BEARISH';
+  timeframe: '15M' | '30M' | '1H' | '4H' | '1D';
+  high: number;
+  low: number;
+  sizePercent: number;
+  sizePoints: number;
+  mitigated: boolean;
+  ageHours: number;
+  label: string; // e.g. "FVG 30M Récent 1.5h non mitigé (0.35%)"
+  isRecent: boolean; // < 3 hours
+  isAncient: boolean; // > 8 hours
+  isSignificant: boolean;
+  // ChartPrime High Probability & Volume Profile properties
+  stdevRatio?: number; // Ta.stdev normalization ratio (e.g. 1.85σ above historical avg)
+  highProbability?: boolean; // True when stdevRatio >= filter & high volume
+  pocPrice?: number; // Point of Control inside the FVG (highest volume level)
+  pocVolume?: number;
+  totalVolume?: number;
+  volumeBins?: FVGVolumeBin[];
+  // FVG Retracement & Tap-In tracking
+  isPriceInsideFVG?: boolean; // True when current price is currently inside [low, high]
+  fvgRetracementState?: 'INSIDE_GAP' | 'TESTING_POC' | 'APPROACHING' | 'OUTSIDE';
+  fvgFillPercentage?: number; // 0 to 100% how deep price has retraced into gap
+  distanceToFVGPercent?: number; // Distance in % from current price to FVG entry boundary
+}
+
+export interface IFVGInfo {
+  type: 'BULLISH' | 'BEARISH'; // Current inverted bias (e.g. BULLISH if acting as support)
+  originalType: 'BULLISH' | 'BEARISH';
+  timeframe: '15M' | '30M' | '1H' | '4H';
+  high: number;
+  low: number;
+  sizePercent: number;
+  sizePoints: number;
+  ageHours: number;
+  retested: boolean;
+  role: 'INVERTED_SUPPORT' | 'INVERTED_RESISTANCE';
+  label: string; // e.g. "IFVG 15M Inversé (Support - 0.42%)"
+}
+
+export interface OrderBlockInfo {
+  type: 'BULLISH' | 'BEARISH';
+  high: number;
+  low: number;
+  timeframe: string;
+  volumeConfirmed: boolean;
+}
+
+export interface FibonacciZone {
+  swingHigh: number;
+  swingLow: number;
+  equilibrium50: number;
+  oteZoneStart: number; // 62%
+  oteZoneEnd: number; // 79%
+  currentZone: 'DISCOUNT' | 'PREMIUM' | 'EQUILIBRIUM';
+  discountPercentage: number;
+  isFavorable: boolean; // Discount for BUY, Premium for SELL
+}
+
+export interface LiquiditySweep {
+  type: 'BSL_SWEEP' | 'SSL_SWEEP'; // Buy-Side Liquidity or Sell-Side Liquidity
+  priceSwept: number;
+  rejectionConfirmed: boolean;
+  timestamp: number;
+  description: string;
+}
+
+export interface RestingLiquidity {
+  targetType: 'BSL' | 'SSL' | 'EQUAL_HIGHS' | 'EQUAL_LOWS';
+  priceLevel: number;
+  label: string; // e.g. "BSL Non Balayé (Cible TP1)"
+  distancePercent: number;
+}
+
+export interface SMCConfluenceDetails {
+  // Condition 1: HTF Alignment (1D, 4H, 30M)
+  condition1_HTFTrend: {
+    satisfied: boolean;
+    daily: TimeframeTrend;
+    fourHour: TimeframeTrend;
+    thirtyMin: TimeframeTrend;
+    summary: string;
+  };
+  // Condition 2: FVG & OB (Recent vs Ancient Mitigated) & IFVG
+  condition2_FVG_OB: {
+    satisfied: boolean;
+    recentUnmitigatedFVG?: FVGInfo;
+    ancientMitigatedFVG?: FVGInfo;
+    inversionFVG?: IFVGInfo; // Inversion Fair Value Gap
+    orderBlock?: OrderBlockInfo;
+    minFvgThresholdPercent?: number;
+    summary: string;
+  };
+  // Condition 3: Fibonacci Discount / Premium
+  condition3_Fibonacci: {
+    satisfied: boolean;
+    fiboData: FibonacciZone;
+    summary: string;
+  };
+  // Condition 4: Liquidity Sweep & Rejection
+  condition4_LiquiditySweep: {
+    satisfied: boolean;
+    sweep?: LiquiditySweep;
+    restingTargets: RestingLiquidity[];
+    summary: string;
+  };
+}
+
+export interface SMCSignal {
+  id: string;
+  pair: string;
+  symbol: string;
+  category: MarketCategory;
+  direction: SignalDirection;
+  currentPrice: number;
+  entryPrice: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  tp3?: number;
+  riskRewardRatio: number;
+  confluenceGrade: ConfluenceGrade;
+  confluenceScore: number; // e.g. 100 for 4/4, 85 for 3/4, 65 for 2/4
+  conditionsMetCount: number; // 2, 3, or 4
+  confluences: SMCConfluenceDetails;
+  timestamp: number;
+  formattedTime: string;
+  tradeTaken: boolean;
+  tradeTakenAt?: number;
+  mutedUntil?: number;
+}
+
+export interface PairInfo {
+  id: string;
+  symbol: string;
+  name: string;
+  category: MarketCategory;
+  price: number;
+  change24h: number;
+  high24h: number;
+  low24h: number;
+  decimals: number;
+  unit: string;
+  lastUpdated: number;
+}
+
+export interface TelegramSettings {
+  botToken: string;
+  chatId: string;
+  enabled: boolean;
+  alertLevels: ConfluenceGrade[]; // e.g. ['SNIPER', 'MEDIUM', 'WATCHLIST']
+  activeCategories: MarketCategory[];
+  activePairs: string[]; // List of pair symbols or empty for all active categories
+  targetTimeframes: string[]; // ['15M', '30M', '1H', '4H', '1D']
+  minFvgSizePercent: number; // e.g. 0.15% min size threshold to be significant
+  fvgGapFilterStdev: number; // e.g. 0.5σ (ChartPrime ta.stdev filter for high-probability gaps)
+  fvgVolumeProfileBins: number; // e.g. 15 bins for intra-gap Volume Profile & POC
+  notifyOnFVGTap: boolean; // Alert when price retraces and enters the FVG entry zone
+  showIFVG: boolean; // Enable Inversion FVG detection and alerts
+  fvgTimeframes: string[]; // e.g. ['15M', '30M']
+  antiDuplicateHours: number; // Default 6 hours
+  scanIntervalMinutes: number; // Default 10 minutes
+  soundEnabled: boolean;
+  lastScanTimestamp: number;
+  mutedPairs: Record<string, number>; // pair -> un-mute timestamp
+}
+
+export interface AlertHistoryItem {
+  id: string;
+  timestamp: number;
+  signalId: string;
+  pair: string;
+  category: MarketCategory;
+  direction: SignalDirection;
+  confluenceGrade: ConfluenceGrade;
+  confluenceScore: number;
+  entryPrice: number;
+  stopLoss: number;
+  tp1: number;
+  tp2: number;
+  riskRewardRatio: number;
+  telegramSent: boolean;
+  telegramError?: string;
+  status: 'DELIVERED' | 'MUTED' | 'TRADE_TAKEN' | 'LOCAL_ONLY' | 'FAILED';
+  alertType?: 'SIGNAL_CREATED' | 'FVG_TAP_IN';
+  detailsSummary: string;
+}

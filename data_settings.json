@@ -1,0 +1,38 @@
+{
+  "botToken": "",
+  "chatId": "",
+  "enabled": true,
+  "alertLevels": [
+    "SNIPER",
+    "MEDIUM",
+    "WATCHLIST"
+  ],
+  "activeCategories": [
+    "CRYPTO",
+    "FOREX",
+    "COMMODITIES",
+    "SYNTHETICS"
+  ],
+  "activePairs": [],
+  "targetTimeframes": [
+    "15M",
+    "30M",
+    "1H",
+    "4H",
+    "1D"
+  ],
+  "minFvgSizePercent": 0.15,
+  "fvgGapFilterStdev": 0.5,
+  "fvgVolumeProfileBins": 15,
+  "notifyOnFVGTap": true,
+  "showIFVG": true,
+  "fvgTimeframes": [
+    "15M",
+    "30M"
+  ],
+  "antiDuplicateHours": 6,
+  "scanIntervalMinutes": 10,
+  "soundEnabled": true,
+  "lastScanTimestamp": 1787767148010,
+  "mutedPairs": {}
+}

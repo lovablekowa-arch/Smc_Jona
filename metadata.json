@@ -1,0 +1,7 @@
+{
+  "name": "SMC & Liquidity Signals",
+  "description": "Plateforme ultra-épurée de signaux Smart Money Concepts (SMC) et flux de liquidités multi-marchés avec alertes Telegram 24/7 et scan de confluences.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
