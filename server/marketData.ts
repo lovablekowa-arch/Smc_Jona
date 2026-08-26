@@ -51,10 +51,10 @@ export const PAIRS_CATALOG: Array<{
 const livePricesCache = new Map<string, PairInfo>();
 const candleCache = new Map<string, Record<string, Candle[]>>();
 
-// Fetch real crypto prices from Binance
+// Fetch real crypto prices from Binance with fast timeout and fallback
 async function fetchBinancePrices(): Promise<Record<string, { price: number; change24h: number; high: number; low: number }>> {
   try {
-    const res = await fetch('https://api.binance.com/api/v3/ticker/24hr', { signal: AbortSignal.timeout(4000) });
+    const res = await fetch('https://api.binance.com/api/v3/ticker/24hr', { signal: AbortSignal.timeout(2500) });
     if (!res.ok) throw new Error('Binance HTTP ' + res.status);
     const data = await res.json() as Array<{ symbol: string; lastPrice: string; priceChangePercent: string; highPrice: string; lowPrice: string }>;
     
@@ -70,17 +70,17 @@ async function fetchBinancePrices(): Promise<Record<string, { price: number; cha
       }
     }
     return result;
-  } catch (err) {
-    // Fallback if network blocked or rate limited
+  } catch {
+    // Immediate safe fallback if network is blocked, rate limited, or on serverless
     return {};
   }
 }
 
-// Fetch real Binance klines
+// Fetch real Binance klines with fast timeout & instant synthetic fallback
 export async function fetchBinanceKlines(symbol: string, interval: '1d' | '4h' | '30m' | '15m' | '1h', limit = 60): Promise<Candle[]> {
   try {
     const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`, {
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) throw new Error('Binance Klines HTTP ' + res.status);
     const data = await res.json() as any[];
@@ -92,7 +92,7 @@ export async function fetchBinanceKlines(symbol: string, interval: '1d' | '4h' |
       close: parseFloat(d[4]),
       volume: parseFloat(d[5]),
     }));
-  } catch (err) {
+  } catch {
     return generateSyntheticCandles(symbol, interval, limit);
   }
 }
