@@ -4,8 +4,21 @@ import { AlertHistoryItem, ConfluenceGrade, MarketCategory, SMCSignal, TelegramS
 import { analyzeAllPairs } from './smcEngine';
 import { formatTelegramFVGTapInMessage, formatTelegramSignalMessage, sendTelegramMessage } from './telegram';
 
-const SETTINGS_FILE = path.join(process.cwd(), 'data_settings.json');
-const HISTORY_FILE = path.join(process.cwd(), 'data_history.json');
+// Helper to get safe writable path
+function getWritablePath(filename: string): string {
+  try {
+    const defaultPath = path.join(process.cwd(), filename);
+    // Test write permission
+    fs.accessSync(process.cwd(), fs.constants.W_OK);
+    return defaultPath;
+  } catch {
+    // Fallback to /tmp in serverless environments like Vercel
+    return path.join('/tmp', filename);
+  }
+}
+
+const SETTINGS_FILE = getWritablePath('data_settings.json');
+const HISTORY_FILE = getWritablePath('data_history.json');
 
 const DEFAULT_SETTINGS: TelegramSettings = {
   botToken: '',

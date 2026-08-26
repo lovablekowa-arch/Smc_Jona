@@ -104,6 +104,16 @@ export default function App() {
           playAlertSound('SNIPER');
         }
         prevSniperCountRef.current = currentSniperCount;
+      } else if (!quiet && (!signals || signals.length === 0)) {
+        // If initial load returned empty cache, trigger instant scan
+        fetch('/api/scan', { method: 'POST' })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data?.signals && Array.isArray(data.signals)) {
+              setSignals(data.signals);
+            }
+          })
+          .catch(() => {});
       }
 
       if (pairsData && Array.isArray(pairsData) && pairsData.length > 0) {
