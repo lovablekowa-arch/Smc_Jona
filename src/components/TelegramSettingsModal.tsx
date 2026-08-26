@@ -90,14 +90,16 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
   };
 
   const handleTest = async () => {
-    if (!botToken || !chatId) {
+    const cleanToken = botToken.replace(/\s+/g, '');
+    const cleanChat = chatId.replace(/\s+/g, '');
+    if (!cleanToken || !cleanChat) {
       setTestResult({ success: false, message: 'Veuillez saisir votre Token Bot et Chat ID avant de tester.' });
       return;
     }
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await onTestTelegram(botToken, chatId);
+      const res = await onTestTelegram(cleanToken, cleanChat);
       if (res.success) {
         setTestResult({ success: true, message: 'Message test envoyé avec succès sur votre Telegram ! Vérifiez votre smartphone.' });
       } else {
@@ -113,9 +115,11 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
   const handleSave = async () => {
     setSaving(true);
     try {
+      const cleanToken = botToken.replace(/\s+/g, '');
+      const cleanChat = chatId.replace(/\s+/g, '');
       await onSaveSettings({
-        botToken: botToken.trim(),
-        chatId: chatId.trim(),
+        botToken: cleanToken,
+        chatId: cleanChat,
         enabled,
         alertLevels,
         activeCategories,

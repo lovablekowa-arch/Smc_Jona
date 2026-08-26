@@ -11,10 +11,12 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
     const { signal, botToken, chatId } = body || {};
-    const token = botToken || getSettings().botToken;
-    const chat = chatId || getSettings().chatId;
+    const rawToken = botToken || getSettings().botToken || '';
+    const rawChat = chatId || getSettings().chatId || '';
+    const token = rawToken.toString().replace(/\s+/g, '');
+    const chat = rawChat.toString().replace(/\s+/g, '');
 
     if (!token || !chat) {
       return res.status(400).json({ success: false, error: 'Token Bot ou Chat ID manquant' });
@@ -24,6 +26,6 @@ export default async function handler(req: any, res: any) {
     const result = await sendTelegramMessage(token, chat, msg);
     return res.status(200).json(result);
   } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message || 'Error sending signal to Telegram' });
+    return res.status(200).json({ success: false, error: err.message || 'Erreur d\'envoi Telegram' });
   }
 }

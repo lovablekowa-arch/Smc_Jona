@@ -150,8 +150,8 @@ export async function sendTelegramMessage(
     return { success: false, error: 'Token Bot ou Chat ID manquant' };
   }
 
-  const cleanToken = botToken.trim();
-  const cleanChatId = chatId.trim();
+  const cleanToken = botToken.toString().replace(/\s+/g, '');
+  const cleanChatId = chatId.toString().replace(/\s+/g, '');
   const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
 
   try {
