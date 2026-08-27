@@ -108,7 +108,11 @@ export function getLatestSignals(): SMCSignal[] {
   return latestSignalsCache;
 }
 
-export function muteTradePair(pairSymbol: string, hours = 6): { mutedUntil: number; pairSymbol: string } {
+export function muteTradePair(
+  pairSymbol: string,
+  hours = 6,
+  signalData?: Partial<SMCSignal>
+): { mutedUntil: number; pairSymbol: string } {
   const muteDurationMs = hours * 60 * 60 * 1000;
   const mutedUntil = Date.now() + muteDurationMs;
   currentSettings.mutedPairs[pairSymbol] = mutedUntil;
@@ -122,28 +126,45 @@ export function muteTradePair(pairSymbol: string, hours = 6): { mutedUntil: numb
     return s;
   });
 
-  // Log in history
+  // Log rich taken trade in history
   alertHistory.unshift({
     id: `trade_${pairSymbol}_${Date.now()}`,
     timestamp: Date.now(),
-    signalId: `trade_${pairSymbol}`,
+    signalId: signalData?.id || `trade_${pairSymbol}`,
     pair: pairSymbol,
-    category: 'CRYPTO',
-    direction: 'BUY',
-    confluenceGrade: 'SNIPER',
-    confluenceScore: 100,
-    entryPrice: 0,
-    stopLoss: 0,
-    tp1: 0,
-    tp2: 0,
-    riskRewardRatio: 0,
+    category: signalData?.category || 'CRYPTO',
+    direction: signalData?.direction || 'BUY',
+    confluenceGrade: signalData?.confluenceGrade || 'SNIPER',
+    confluenceScore: signalData?.confluenceScore || 100,
+    entryPrice: signalData?.entryPrice || 0,
+    stopLoss: signalData?.stopLoss || 0,
+    tp1: signalData?.tp1 || 0,
+    tp2: signalData?.tp2 || 0,
+    riskRewardRatio: signalData?.riskRewardRatio || 0,
+    currentPrice: signalData?.currentPrice || signalData?.entryPrice || 0,
+    tradeTakenAt: Date.now(),
+    outcome: 'IN_PROGRESS',
     telegramSent: false,
     status: 'TRADE_TAKEN',
-    detailsSummary: `Trade Pris ! Paire mise en sourdine anti-doublon pendant ${hours}h.`,
+    detailsSummary: `Position prise (${signalData?.direction || 'ACHAT'}). Paire en sourdine ${hours}h. Suivi TP1/TP2 en direct.`,
   });
   saveHistory();
 
   return { mutedUntil, pairSymbol };
+}
+
+export function unmuteTradePair(pairSymbol: string): { success: boolean; pairSymbol: string } {
+  delete currentSettings.mutedPairs[pairSymbol];
+  saveSettings();
+
+  latestSignalsCache = latestSignalsCache.map((s) => {
+    if (s.pair === pairSymbol || s.symbol === pairSymbol) {
+      return { ...s, tradeTaken: false, tradeTakenAt: undefined, mutedUntil: undefined };
+    }
+    return s;
+  });
+
+  return { success: true, pairSymbol };
 }
 
 export async function executeScan(isManual = false): Promise<{ signals: SMCSignal[]; alertsDispatched: number }> {

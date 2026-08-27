@@ -63,7 +63,13 @@ export default function App() {
     } catch {}
     return DEFAULT_SETTINGS;
   });
-  const [history, setHistory] = useState<AlertHistoryItem[]>([]);
+  const [history, setHistory] = useState<AlertHistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('smc_alert_history');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
   const [isScanning, setIsScanning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<MarketCategory | 'ALL'>('ALL');
   const [selectedGrade, setSelectedGrade] = useState<ConfluenceGrade | 'ALL'>('ALL');
@@ -78,6 +84,16 @@ export default function App() {
   const showToast = (text: string, type: 'success' | 'info' | 'error' = 'info') => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  // Sync history to localStorage
+  const saveHistoryToLocal = (newHistory: AlertHistoryItem[]) => {
+    setHistory(newHistory);
+    try {
+      localStorage.setItem('smc_alert_history', JSON.stringify(newHistory));
+    } catch (err) {
+      console.error('Error saving history to localStorage:', err);
+    }
   };
 
   // Fetch all data safely with resilience
@@ -137,11 +153,23 @@ export default function App() {
       }
 
       if (settingsData && typeof settingsData === 'object' && settingsData.scanIntervalMinutes) {
-        setSettings((prev) => ({ ...prev, ...settingsData }));
+        setSettings((prev) => {
+          const merged = { ...prev, ...settingsData };
+          localStorage.setItem('smc_telegram_settings', JSON.stringify(merged));
+          return merged;
+        });
       }
 
-      if (historyData && Array.isArray(historyData)) {
-        setHistory(historyData);
+      if (historyData && Array.isArray(historyData) && historyData.length > 0) {
+        setHistory((prev) => {
+          // Merge server history with local history (avoiding duplicate IDs)
+          const map = new Map<string, AlertHistoryItem>();
+          prev.forEach((item) => map.set(item.id, item));
+          historyData.forEach((item: AlertHistoryItem) => map.set(item.id, item));
+          const combined = Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+          localStorage.setItem('smc_alert_history', JSON.stringify(combined));
+          return combined;
+        });
       }
     } catch {
       // Graceful fallback if network fails
@@ -163,7 +191,7 @@ export default function App() {
         const detectedSignals = data.signals && data.signals.length > 0 ? data.signals : generateClientFallbackSignals();
         setSignals(detectedSignals);
         showToast(
-          `Scan terminé : ${detectedSignals.length} paires analysées (${data.alertsDispatched || 0} alertes Telegram envoyées)`,
+          `Scan terminé : ${detectedSignals.length} opportunités SMC analysées (${data.alertsDispatched || 0} alertes Telegram envoyées)`,
           'success',
         );
         fetchData(true);
@@ -181,21 +209,119 @@ export default function App() {
     }
   };
 
-  // Mark trade taken (mute pair for 6h)
-  const handleTakeTrade = async (pairSymbol: string) => {
+  // Mark trade taken:
+  // 1. Removes signal immediately from dashboard feed
+  // 2. Archives in Historique (Positions Prises) with live TP1/TP2/SL tracking
+  // 3. Mutes pair for 6h to avoid duplicate noise
+  const handleTakeTrade = async (signal: SMCSignal) => {
+    const hours = settings.antiDuplicateHours || 6;
+    const muteDurationMs = hours * 60 * 60 * 1000;
+    const mutedUntil = Date.now() + muteDurationMs;
+
+    // 1. Update local mutedPairs in settings
+    const updatedSettings = {
+      ...settings,
+      mutedPairs: {
+        ...settings.mutedPairs,
+        [signal.pair]: mutedUntil,
+      },
+    };
+    setSettings(updatedSettings);
+    localStorage.setItem('smc_telegram_settings', JSON.stringify(updatedSettings));
+
+    // 2. Create rich taken position entry for history
+    const newTakenTrade: AlertHistoryItem = {
+      id: `taken_${signal.pair}_${Date.now()}`,
+      timestamp: Date.now(),
+      signalId: signal.id,
+      pair: signal.pair,
+      category: signal.category,
+      direction: signal.direction,
+      confluenceGrade: signal.confluenceGrade,
+      confluenceScore: signal.confluenceScore,
+      entryPrice: signal.entryPrice,
+      stopLoss: signal.stopLoss,
+      tp1: signal.tp1,
+      tp2: signal.tp2,
+      riskRewardRatio: signal.riskRewardRatio,
+      currentPrice: signal.currentPrice || signal.entryPrice,
+      tradeTakenAt: Date.now(),
+      outcome: 'IN_PROGRESS',
+      status: 'TRADE_TAKEN',
+      telegramSent: false,
+      detailsSummary: `Position prise manuellement sur ${signal.pair} (${signal.direction === 'BUY' ? 'ACHAT' : 'VENTE'}). Suivi TP1/TP2 en direct.`,
+    };
+
+    const updatedHistory = [newTakenTrade, ...history];
+    saveHistoryToLocal(updatedHistory);
+
+    // 3. Mark in signals list so it disappears from dashboard
+    setSignals((prev) =>
+      prev.map((s) => (s.pair === signal.pair || s.symbol === signal.symbol ? { ...s, tradeTaken: true, mutedUntil } : s))
+    );
+
+    showToast(`🎯 Position prise pour ${signal.pair} ! Retirée du dashboard et archivée dans l'Historique (suivi TP1/TP2).`, 'success');
+
+    // 4. Dispatch to API
     try {
-      const res = await fetch('/api/take-trade', {
+      await fetch('/api/take-trade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pairSymbol, hours: settings.antiDuplicateHours || 6 }),
+        body: JSON.stringify({ pairSymbol: signal.pair, hours, signal }),
       });
-      if (res.ok) {
-        showToast(`Trade pris pour ${pairSymbol} ! Paire mise en sourdine pendant ${settings.antiDuplicateHours || 6}h.`, 'success');
-        fetchData(true);
-      }
-    } catch (err: any) {
-      showToast('Erreur: ' + err.message, 'error');
+    } catch {
+      // Offline / serverless resilient
     }
+  };
+
+  // Restore a taken trade back to dashboard (unmute)
+  const handleRestoreTrade = (pairSymbol: string) => {
+    // 1. Remove from mutedPairs
+    const updatedMuted = { ...settings.mutedPairs };
+    delete updatedMuted[pairSymbol];
+    const updatedSettings = { ...settings, mutedPairs: updatedMuted };
+    setSettings(updatedSettings);
+    localStorage.setItem('smc_telegram_settings', JSON.stringify(updatedSettings));
+
+    // 2. Mark taken trades for this pair as closed/restored
+    const updatedHistory = history.map((item) => {
+      if (item.pair === pairSymbol && (item.status === 'TRADE_TAKEN' || item.tradeTakenAt) && !item.tradeClosedAt) {
+        return { ...item, tradeClosedAt: Date.now() };
+      }
+      return item;
+    });
+    saveHistoryToLocal(updatedHistory);
+
+    // 3. Un-mute in signals state
+    setSignals((prev) =>
+      prev.map((s) => (s.pair === pairSymbol ? { ...s, tradeTaken: false, mutedUntil: undefined } : s))
+    );
+
+    showToast(`🔄 Paire ${pairSymbol} réactivée et rétablie sur le dashboard !`, 'success');
+  };
+
+  // Close trade manually in history
+  const handleCloseTrade = (tradeId: string) => {
+    const updatedHistory = history.map((item) => {
+      if (item.id === tradeId) {
+        return { ...item, outcome: 'CLOSED_MANUAL' as const, tradeClosedAt: Date.now() };
+      }
+      return item;
+    });
+    saveHistoryToLocal(updatedHistory);
+    showToast('Position clôturée manuellement dans l\'historique.', 'info');
+  };
+
+  // Delete single history item
+  const handleDeleteHistoryItem = (id: string) => {
+    const updatedHistory = history.filter((item) => item.id !== id);
+    saveHistoryToLocal(updatedHistory);
+  };
+
+  // Clear all history
+  const handleClearHistory = () => {
+    saveHistoryToLocal([]);
+    showToast('Historique des alertes vidé.', 'info');
   };
 
   // Force send a signal to Telegram
@@ -210,171 +336,190 @@ export default function App() {
     }
 
     try {
-      let sent = false;
-      // 1. Try server route
+      showToast(`Envoi du signal ${signal.pair} à Telegram...`, 'info');
+
+      // 1. Try serverless backend route
+      let sentSuccessfully = false;
       try {
         const res = await fetch('/api/telegram/send-signal', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ signal, botToken: cleanToken, chatId: cleanChat }),
-          signal: AbortSignal.timeout(5000),
         });
         if (res.ok) {
-          const data = await res.json().catch(() => null);
-          if (data && data.success) {
-            sent = true;
-          }
+          const data = await res.json();
+          if (data.success) sentSuccessfully = true;
         }
       } catch {
-        // Fallback to direct client call
+        // Fallback to client-side direct dispatch below
       }
 
-      // 2. Direct Telegram API fallback if needed
-      if (!sent) {
+      // 2. Client-side direct fallback if server route failed
+      if (!sentSuccessfully) {
         const isBuy = signal.direction === 'BUY';
-        const dirText = isBuy ? '🟢 <b>ACHAT (LONG)</b>' : '🔴 <b>VENTE (SHORT)</b>';
-        const msg = `🎯 <b>SIGNAL SMC SNIPER</b>
-━━━━━━━━━━━━━━━━━━━━
-📊 <b>Paire:</b> <code>${signal.pair}</code>
-🧭 <b>Direction:</b> ${dirText}
-💰 <b>Prix Actuel:</b> <code>${signal.currentPrice}</code>
-🔹 <b>Entrée:</b> <code>${signal.entryPrice}</code>
-🛑 <b>SL:</b> <code>${signal.stopLoss}</code>
-🎯 <b>TP1:</b> <code>${signal.tp1}</code> | <b>TP2:</b> <code>${signal.tp2}</code>
-⚖️ <b>Ratio R:R:</b> 1 : ${signal.riskRewardRatio}
-⏰ <b>Heure:</b> ${signal.formattedTime}`;
+        const tgIcon = isBuy ? '🟢' : '🔴';
+        const dirLabel = isBuy ? 'ACHAT (LONG)' : 'VENTE (SHORT)';
+        const c1 = signal.confluences.condition1_HTFTrend;
+        const c2 = signal.confluences.condition2_FVG_OB;
+        const c3 = signal.confluences.condition3_Fibonacci;
+        const c4 = signal.confluences.condition4_LiquiditySweep;
 
-        const directRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+        const messageText = `🎯 <b>SMC SNIPER SIGNAL - ${signal.pair}</b>
+━━━━━━━━━━━━━━━━━━
+📊 <b>Direction:</b> ${tgIcon} <b>${dirLabel}</b>
+⭐ <b>Confluence:</b> ${signal.confluenceGrade} (${signal.confluenceScore}%)
+🏢 <b>Catégorie:</b> ${signal.category}
+
+💵 <b>Entrée:</b> <code>${signal.entryPrice}</code>
+🛑 <b>Stop Loss:</b> <code>${signal.stopLoss}</code>
+🎯 <b>TP1 (Liq.):</b> <code>${signal.tp1}</code>
+🎯 <b>TP2 (Equal H/L):</b> <code>${signal.tp2}</code>
+⚖️ <b>Ratio R:R:</b> 1 : ${signal.riskRewardRatio}
+
+<b>🔍 MATRICE DE CONFLUENCES (4/4):</b>
+• <b>HTF Trend:</b> ${c1.satisfied ? '✅' : '❌'} 1D ${c1.daily.bias} | 4H ${c1.fourHour.bias}
+• <b>FVG / Inversion:</b> ${c2.satisfied ? '✅' : '❌'} ${c2.recentUnmitigatedFVG?.label || c2.inversionFVG?.label || 'Zone détectée'}
+• <b>Fibonacci OTE:</b> ${c3.satisfied ? '✅' : '❌'} ${c3.fiboData.currentZone} (${c3.fiboData.discountPercentage.toFixed(1)}%)
+• <b>Liquidity Sweep:</b> ${c4.satisfied ? '✅' : '❌'} ${c4.sweep?.description || 'Pools identifiés'}
+
+⏰ <i>${new Date().toLocaleString('fr-FR')} - SMC 24/7 Engine</i>`;
+
+        const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             chat_id: cleanChat,
-            text: msg,
+            text: messageText,
             parse_mode: 'HTML',
+            disable_web_page_preview: true,
           }),
-          signal: AbortSignal.timeout(8000),
         });
-        const directData = await directRes.json();
-        if (directData.ok) {
-          sent = true;
+
+        if (tgRes.ok) {
+          sentSuccessfully = true;
         } else {
-          throw new Error(directData.description || 'Erreur Telegram');
+          const errData = await tgRes.json();
+          throw new Error(errData.description || 'Erreur Telegram');
         }
       }
 
-      showToast(`Alerte détaillée pour ${signal.pair} envoyée sur Telegram !`, 'success');
-      if (settings.soundEnabled) playAlertSound('MEDIUM');
-      fetchData(true);
+      showToast(`Signal ${signal.pair} expédié sur Telegram avec succès !`, 'success');
+      playAlertSound('DELIVERED');
+
+      // Log in alert history
+      const historyItem: AlertHistoryItem = {
+        id: `manual_tg_${signal.pair}_${Date.now()}`,
+        timestamp: Date.now(),
+        signalId: signal.id,
+        pair: signal.pair,
+        category: signal.category,
+        direction: signal.direction,
+        confluenceGrade: signal.confluenceGrade,
+        confluenceScore: signal.confluenceScore,
+        entryPrice: signal.entryPrice,
+        stopLoss: signal.stopLoss,
+        tp1: signal.tp1,
+        tp2: signal.tp2,
+        riskRewardRatio: signal.riskRewardRatio,
+        telegramSent: true,
+        status: 'DELIVERED',
+        detailsSummary: `Signal ${signal.pair} (${signal.confluenceGrade}) envoyé manuellement à Telegram.`,
+      };
+
+      saveHistoryToLocal([historyItem, ...history]);
     } catch (err: any) {
-      showToast('Erreur lors de l\'envoi: ' + err.message, 'error');
+      showToast(`Échec d'envoi Telegram: ${err.message}`, 'error');
     }
   };
 
-  // Save settings
-  const handleSaveSettings = async (newSettings: Partial<TelegramSettings>) => {
-    try {
-      const merged = { ...settings, ...newSettings };
-      setSettings(merged);
-      try {
-        localStorage.setItem('smc_telegram_settings', JSON.stringify(merged));
-      } catch {}
+  // Save Telegram & Engine Settings
+  const handleSaveSettings = async (newSettings: TelegramSettings) => {
+    setSettings(newSettings);
+    localStorage.setItem('smc_telegram_settings', JSON.stringify(newSettings));
+    showToast('Paramètres SMC & Telegram enregistrés !', 'success');
 
-      const res = await fetch('/api/settings', {
+    try {
+      await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSettings),
-        signal: AbortSignal.timeout(4000),
       });
-      if (res.ok) {
-        const saved = await res.json().catch(() => null);
-        if (saved) setSettings(saved);
-      }
-      showToast('Paramètres et configuration 24/7 sauvegardés avec succès !', 'success');
-    } catch (err: any) {
-      showToast('Paramètres sauvegardés localement !', 'success');
+    } catch {
+      // Local fallback already saved
     }
   };
 
-  // Test Telegram credentials
-  const handleTestTelegram = async (botToken: string, chatId: string): Promise<{ success: boolean; error?: string }> => {
-    const cleanToken = botToken.replace(/\s+/g, '');
-    const cleanChat = chatId.replace(/\s+/g, '');
+  // Test Telegram configuration
+  const handleTestTelegram = async (token: string, chat: string) => {
+    const cleanToken = token.trim();
+    const cleanChat = chat.trim();
 
     if (!cleanToken || !cleanChat) {
-      return { success: false, error: 'Token Bot ou Chat ID manquant' };
+      throw new Error('Veuillez renseigner le Bot Token et le Chat ID.');
     }
 
-    // 1. Try server API
     try {
       const res = await fetch('/api/telegram/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ botToken: cleanToken, chatId: cleanChat }),
-        signal: AbortSignal.timeout(5000),
       });
 
       if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && typeof data.success === 'boolean') {
-          return data;
-        }
+        const data = await res.json();
+        if (data.success) return true;
+        throw new Error(data.error || 'Échec du test');
       }
-    } catch {
-      // Proceed to direct fallback
+    } catch (serverErr: any) {
+      console.warn('API test endpoint failed, testing directly with Telegram API...', serverErr);
     }
 
-    // 2. Direct browser-to-Telegram API fallback (works 100% on Vercel)
-    try {
-      const testMsg = `🤖 <b>TEST CONNEXION BOT TELEGRAM — SMC &amp; LIQUIDITY</b>
-━━━━━━━━━━━━━━━━━━━━
-✅ <b>Félicitations !</b> Votre Bot Telegram est parfaitement configuré.
-📡 <b>Mode:</b> Scan automatique 24/7 en arrière-plan.
-💧 <b>Signaux:</b> Confluences SMC, FVG Récent/Ancien, POC Volume &amp; Balayage Liquidité.
+    // Direct fallback
+    const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: cleanChat,
+        text: `🤖 <b>TEST DE CONNEXION RÉUSSI !</b>\n\nVotre bot Telegram est parfaitement connecté au Scanner SMC 24/7.\nVous recevrez automatiquement les alertes de confluence Sniper & Inversion FVG.`,
+        parse_mode: 'HTML',
+      }),
+    });
 
-Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune interruption !`;
-
-      const directRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: cleanChat,
-          text: testMsg,
-          parse_mode: 'HTML',
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-
-      const data = await directRes.json();
-      if (data.ok) {
-        return { success: true };
-      }
-      return { success: false, error: data.description || 'Erreur retournée par Telegram' };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'Impossible de joindre Telegram' };
+    if (!tgRes.ok) {
+      const err = await tgRes.json();
+      throw new Error(err.description || 'Erreur de connexion à Telegram');
     }
+
+    return true;
   };
 
-  // Toggle sound
   const handleToggleSound = () => {
-    const newVal = !settings.soundEnabled;
-    setSettings((prev) => ({ ...prev, soundEnabled: newVal }));
-    handleSaveSettings({ soundEnabled: newVal });
-    if (newVal) playAlertSound('TEST');
+    const newSoundState = !settings.soundEnabled;
+    const updated = { ...settings, soundEnabled: newSoundState };
+    handleSaveSettings(updated);
+    if (newSoundState) {
+      playAlertSound('SNIPER');
+    }
   };
 
   // Initial load
   useEffect(() => {
     fetchData();
-
-    // Fast price poll every 8 seconds
-    const interval = setInterval(() => {
-      fetchData(true);
-    }, 8000);
-
-    return () => clearInterval(interval);
   }, [fetchData]);
 
-  // Countdown timer for next scan
+  // Periodic background polling & countdown
+  useEffect(() => {
+    const intervalMinutes = Math.max(1, settings.scanIntervalMinutes || 10);
+    const intervalMs = intervalMinutes * 60 * 1000;
+
+    const interval = setInterval(() => {
+      fetchData(true);
+    }, intervalMs);
+
+    return () => clearInterval(interval);
+  }, [settings.scanIntervalMinutes, fetchData]);
+
+  // Real-time Countdown timer
   useEffect(() => {
     const scanIntervalSec = (settings.scanIntervalMinutes || 10) * 60;
     const updateCountdown = () => {
@@ -388,8 +533,24 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
     return () => clearInterval(timer);
   }, [settings.scanIntervalMinutes, settings.lastScanTimestamp]);
 
-  // Filter signals
-  const filteredSignals = signals.filter((s) => {
+  // Active signals shown on dashboard:
+  // If a trade has been taken or pair is muted in settings, it is REMOVED from active dashboard feed
+  // so user only sees open/unactioned opportunities
+  const activeDashboardSignals = signals.filter((s) => {
+    const now = Date.now();
+    const isMuted = settings.mutedPairs[s.pair] && now < settings.mutedPairs[s.pair];
+    const hasActiveTakenTrade = history.some(
+      (h) =>
+        (h.pair === s.pair || h.pair === s.symbol) &&
+        (h.status === 'TRADE_TAKEN' || h.tradeTakenAt) &&
+        !h.tradeClosedAt &&
+        now < (h.tradeTakenAt || h.timestamp) + (settings.antiDuplicateHours || 6) * 3600 * 1000
+    );
+    return !s.tradeTaken && !isMuted && !hasActiveTakenTrade;
+  });
+
+  // Filter signals according to user dropdowns & search
+  const filteredSignals = activeDashboardSignals.filter((s) => {
     if (selectedCategory !== 'ALL' && s.category !== selectedCategory) return false;
     if (selectedGrade !== 'ALL' && s.confluenceGrade !== selectedGrade) return false;
     if (searchQuery) {
@@ -399,9 +560,14 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
     return true;
   });
 
-  const sniperCount = signals.filter((s) => s.confluenceGrade === 'SNIPER').length;
-  const mediumCount = signals.filter((s) => s.confluenceGrade === 'MEDIUM').length;
-  const watchlistCount = signals.filter((s) => s.confluenceGrade === 'WATCHLIST').length;
+  const sniperCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'SNIPER').length;
+  const mediumCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'MEDIUM').length;
+  const watchlistCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'WATCHLIST').length;
+
+  // Taken trades active count
+  const takenTradesCount = history.filter(
+    (h) => (h.status === 'TRADE_TAKEN' || h.tradeTakenAt) && !h.tradeClosedAt
+  ).length;
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
@@ -414,6 +580,7 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
         onOpenHistory={() => setIsHistoryOpen(true)}
         onToggleSound={handleToggleSound}
         nextScanSeconds={nextScanSeconds}
+        takenTradesCount={takenTradesCount}
       />
 
       {/* Live Market Ticker */}
@@ -463,7 +630,7 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           stats={{
-            total: signals.length,
+            total: activeDashboardSignals.length,
             sniperCount,
             mediumCount,
             watchlistCount,
@@ -474,16 +641,28 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
         <div className="flex items-center justify-between pt-2">
           <div className="flex items-center space-x-2">
             <h2 className="text-base font-bold text-zinc-100">
-              Flux des Signaux SMC Détectés
+              Flux des Signaux SMC Actifs
             </h2>
             <span className="px-2 py-0.5 rounded-full bg-zinc-850 text-xs font-mono text-zinc-300 border border-zinc-750">
-              {filteredSignals.length} opportunités
+              {filteredSignals.length} opportunités ouvertes
             </span>
           </div>
 
-          <div className="flex items-center space-x-2 text-xs text-zinc-400">
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-            <span className="hidden sm:inline">Mise à jour en temps réel</span>
+          <div className="flex items-center space-x-3 text-xs text-zinc-400">
+            {takenTradesCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setIsHistoryOpen(true)}
+                className="text-emerald-400 hover:underline flex items-center gap-1 font-medium"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                <span>{takenTradesCount} position(s) prise(s) en cours</span>
+              </button>
+            )}
+            <div className="flex items-center space-x-1.5">
+              <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+              <span className="hidden sm:inline">Mise à jour en temps réel</span>
+            </div>
           </div>
         </div>
 
@@ -492,22 +671,37 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
           <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center text-zinc-400 space-y-3">
             <Radio className="h-10 w-10 mx-auto text-zinc-600 animate-pulse" />
             <div className="font-semibold text-zinc-200">
-              Aucun signal ne correspond aux filtres sélectionnés
+              {takenTradesCount > 0
+                ? 'Toutes les opportunités actuelles ont été prises ou mises en sourdine'
+                : 'Aucun signal ne correspond aux filtres sélectionnés'}
             </div>
             <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Le moteur 24/7 surveille les 4 confluences HTF, FVG récents/anciens et balayages de liquidités 💧.
+              {takenTradesCount > 0
+                ? 'Consultez l\'Historique pour suivre vos positions prises en direct (gains TP1, TP2, SL) ou réactivez-les.'
+                : 'Le moteur 24/7 surveille les 4 confluences HTF, FVG récents/anciens et balayages de liquidités 💧.'}
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedCategory('ALL');
-                setSelectedGrade('ALL');
-                setSearchQuery('');
-              }}
-              className="mt-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold"
-            >
-              Réinitialiser les filtres
-            </button>
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedCategory('ALL');
+                  setSelectedGrade('ALL');
+                  setSearchQuery('');
+                }}
+                className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold"
+              >
+                Réinitialiser les filtres
+              </button>
+              {takenTradesCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryOpen(true)}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-zinc-950 text-xs font-bold"
+                >
+                  Voir mes {takenTradesCount} positions prises
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
@@ -555,6 +749,11 @@ Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune 
         isOpen={isHistoryOpen}
         onClose={() => setIsHistoryOpen(false)}
         history={history}
+        pairs={pairs}
+        onRestoreTrade={handleRestoreTrade}
+        onCloseTrade={handleCloseTrade}
+        onDeleteHistoryItem={handleDeleteHistoryItem}
+        onClearHistory={handleClearHistory}
       />
     </div>
   );

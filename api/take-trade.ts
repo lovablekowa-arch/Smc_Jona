@@ -10,9 +10,9 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    const { pairSymbol, hours } = body || {};
-    const result = muteTradePair(pairSymbol, hours || 6);
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    const { pairSymbol, hours, signal } = body || {};
+    const result = muteTradePair(pairSymbol, hours || 6, signal);
     return res.status(200).json(result);
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error processing take trade' });

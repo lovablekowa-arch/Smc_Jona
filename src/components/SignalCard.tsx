@@ -19,7 +19,7 @@ import { SMCSignal } from '../types';
 
 interface SignalCardProps {
   signal: SMCSignal;
-  onTakeTrade: (pairSymbol: string) => void;
+  onTakeTrade: (signal: SMCSignal) => void;
   onSendToTelegram: (signal: SMCSignal) => void;
 }
 
@@ -454,8 +454,9 @@ export const SignalCard: React.FC<SignalCardProps> = ({
           <button
             id={`take-trade-btn-${signal.symbol}`}
             type="button"
-            onClick={() => onTakeTrade(signal.pair)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition-colors border border-zinc-700"
+            onClick={() => onTakeTrade(signal)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition-colors border border-zinc-700 hover:border-emerald-500/50"
+            title="Prendre ce trade (archivera la position dans l'historique avec suivi PnL/TP/SL et retirera la paire du dashboard pendant 6h)"
           >
             <CheckSquare className="h-3.5 w-3.5 text-zinc-400" />
             <span>Trade Pris (Sourdine 6h)</span>

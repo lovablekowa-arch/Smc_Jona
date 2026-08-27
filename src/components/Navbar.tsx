@@ -10,6 +10,7 @@ interface NavbarProps {
   onOpenHistory: () => void;
   onToggleSound: () => void;
   nextScanSeconds: number;
+  takenTradesCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -20,6 +21,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenHistory,
   onToggleSound,
   nextScanSeconds,
+  takenTradesCount = 0,
 }) => {
   const formatSeconds = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -103,6 +105,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <History className="h-3.5 w-3.5 text-zinc-400" />
             <span className="hidden sm:inline">Historique</span>
+            {takenTradesCount > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-500/40 text-[10px] font-mono font-bold">
+                {takenTradesCount}
+              </span>
+            )}
           </button>
 
           {/* Telegram Settings Button */}

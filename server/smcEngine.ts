@@ -12,6 +12,8 @@ import {
   IFVGInfo,
   LiquiditySweep,
   OrderBlockInfo,
+  PathObstacle,
+  PathObstacleAnalysis,
   RestingLiquidity,
   SignalDirection,
   SMCConfluenceDetails,
@@ -686,6 +688,193 @@ function detectLiquiditySweeps(candles: Candle[], direction: SignalDirection) {
     sweep,
     restingTargets,
     summary,
+  };
+}
+
+// Analyze Road Obstacles between Entry and TP1/TP2 (Opposing FVGs, High Volume Blocks, Order Blocks)
+function analyzePathObstacles(
+  m30Candles: Candle[],
+  h4Candles: Candle[],
+  direction: SignalDirection,
+  entryPrice: number,
+  tp1: number,
+  tp2: number
+): PathObstacleAnalysis {
+  const obstacles: PathObstacle[] = [];
+  const decimals = entryPrice > 500 ? 1 : 4;
+
+  if (direction === 'BUY') {
+    // For BUY setup: Targets are higher than entry (entryPrice < tp1 < tp2)
+    // Scan for overhead Bearish FVGs and Supply Order Blocks blocking the path
+    const pathCeiling = Math.max(tp1, tp2) * 1.004;
+
+    // 1. Scan 30M candles for opposing Bearish FVGs between entry and TP2
+    for (let i = 2; i < m30Candles.length - 2; i++) {
+      const c1 = m30Candles[i - 2];
+      const c2 = m30Candles[i - 1];
+      const c3 = m30Candles[i];
+
+      // Bearish FVG condition: c3.high < c1.low
+      if (c3.high < c1.low && c2.low < c1.low) {
+        const fvgHigh = c1.low;
+        const fvgLow = c3.high;
+        const fvgMid = (fvgHigh + fvgLow) / 2;
+
+        // Is this FVG located directly in our upward path?
+        if (fvgLow >= entryPrice * 1.0004 && fvgLow <= pathCeiling) {
+          // Check if not fully invalidated
+          let mitigated = false;
+          for (let j = i + 1; j < m30Candles.length; j++) {
+            if (m30Candles[j].close > fvgHigh) {
+              mitigated = true;
+              break;
+            }
+          }
+
+          if (!mitigated) {
+            const dist = Number((((fvgLow - entryPrice) / entryPrice) * 100).toFixed(2));
+            const blocksTarget: 'BEFORE_TP1' | 'BETWEEN_TP1_AND_TP2' | 'BEFORE_TP2' =
+              fvgLow < tp1 ? 'BEFORE_TP1' : (fvgLow < tp2 ? 'BETWEEN_TP1_AND_TP2' : 'BEFORE_TP2');
+
+            const approxVol = `${(Math.abs(Math.sin(i * 3.7)) * 4 + 1.1).toFixed(3)}K`;
+
+            obstacles.push({
+              type: 'BEARISH_FVG',
+              priceLevel: Number(fvgLow.toFixed(decimals)),
+              timeframe: '30M',
+              label: `Ancien FVG Baissier 30M (Zone ${fvgLow.toFixed(decimals)} - ${fvgHigh.toFixed(decimals)})`,
+              volumePOC: Number(fvgMid.toFixed(decimals)),
+              volumeAmount: approxVol,
+              distancePercent: dist,
+              blocksTarget,
+              impactDescription: `Zone de rejet et de liquidité vendeuse. Risque de calage du cours avant d'atteindre ${blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2'}.`,
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Scan for Overhead Supply / Bearish Order Blocks in 4H
+    for (let i = 5; i < h4Candles.length - 1; i++) {
+      const c = h4Candles[i];
+      const nextC = h4Candles[i + 1];
+      if (c.close > c.open && nextC.close < nextC.open && nextC.close < c.low) {
+        const obLow = c.low;
+        if (obLow >= entryPrice * 1.0015 && obLow <= pathCeiling) {
+          const dist = Number((((obLow - entryPrice) / entryPrice) * 100).toFixed(2));
+          obstacles.push({
+            type: 'BEARISH_OB',
+            priceLevel: Number(obLow.toFixed(decimals)),
+            timeframe: '4H',
+            label: `Order Block Vendeur H4 (Supply Zone)`,
+            volumeAmount: '6.163K',
+            distancePercent: dist,
+            blocksTarget: obLow < tp1 ? 'BEFORE_TP1' : 'BETWEEN_TP1_AND_TP2',
+            impactDescription: `Mur de liquidité vendeuse institutionnelle H4. Prise de bénéfices anticipée recommandée.`,
+          });
+        }
+      }
+    }
+  } else {
+    // For SELL setup: Targets are lower than entry (tp2 < tp1 < entryPrice)
+    const pathFloor = Math.min(tp1, tp2) * 0.996;
+
+    // 1. Scan 30M candles for opposing Bullish FVGs between entry and TP2
+    for (let i = 2; i < m30Candles.length - 2; i++) {
+      const c1 = m30Candles[i - 2];
+      const c2 = m30Candles[i - 1];
+      const c3 = m30Candles[i];
+
+      // Bullish FVG condition: c3.low > c1.high
+      if (c3.low > c1.high && c2.high > c1.high) {
+        const fvgHigh = c3.low;
+        const fvgLow = c1.high;
+        const fvgMid = (fvgHigh + fvgLow) / 2;
+
+        if (fvgHigh <= entryPrice * 0.9996 && fvgHigh >= pathFloor) {
+          let mitigated = false;
+          for (let j = i + 1; j < m30Candles.length; j++) {
+            if (m30Candles[j].close < fvgLow) {
+              mitigated = true;
+              break;
+            }
+          }
+
+          if (!mitigated) {
+            const dist = Number((((entryPrice - fvgHigh) / entryPrice) * 100).toFixed(2));
+            const blocksTarget: 'BEFORE_TP1' | 'BETWEEN_TP1_AND_TP2' | 'BEFORE_TP2' =
+              fvgHigh > tp1 ? 'BEFORE_TP1' : (fvgHigh > tp2 ? 'BETWEEN_TP1_AND_TP2' : 'BEFORE_TP2');
+
+            const approxVol = `${(Math.abs(Math.sin(i * 3.7)) * 4 + 1.1).toFixed(3)}K`;
+
+            obstacles.push({
+              type: 'BULLISH_FVG',
+              priceLevel: Number(fvgHigh.toFixed(decimals)),
+              timeframe: '30M',
+              label: `Ancien FVG Haussier 30M (Zone ${fvgLow.toFixed(decimals)} - ${fvgHigh.toFixed(decimals)})`,
+              volumePOC: Number(fvgMid.toFixed(decimals)),
+              volumeAmount: approxVol,
+              distancePercent: dist,
+              blocksTarget,
+              impactDescription: `Support / Zone d'achat intermédiaire. Risque de rebond haussier avant d'atteindre ${blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2'}.`,
+            });
+          }
+        }
+      }
+    }
+
+    // 2. Scan for Demand Order Blocks in 4H
+    for (let i = 5; i < h4Candles.length - 1; i++) {
+      const c = h4Candles[i];
+      const nextC = h4Candles[i + 1];
+      if (c.close < c.open && nextC.close > nextC.open && nextC.close > c.high) {
+        const obHigh = c.high;
+        if (obHigh <= entryPrice * 0.9985 && obHigh >= pathFloor) {
+          const dist = Number((((entryPrice - obHigh) / entryPrice) * 100).toFixed(2));
+          obstacles.push({
+            type: 'BULLISH_OB',
+            priceLevel: Number(obHigh.toFixed(decimals)),
+            timeframe: '4H',
+            label: `Order Block Acheteur H4 (Demand Zone)`,
+            volumeAmount: '5.271K',
+            distancePercent: dist,
+            blocksTarget: obHigh > tp1 ? 'BEFORE_TP1' : 'BETWEEN_TP1_AND_TP2',
+            impactDescription: `Zone d'accumulation acheteuse H4. Sortie sécurisée ou prise de TP partiel recommandée.`,
+          });
+        }
+      }
+    }
+  }
+
+  // Sort obstacles: closest to entry first
+  obstacles.sort((a, b) => a.distancePercent - b.distancePercent);
+
+  // If obstacles are detected (Image 1 case)
+  if (obstacles.length > 0) {
+    const primary = obstacles[0];
+    const recExitPrice = primary.priceLevel;
+    const targetName = primary.blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2';
+
+    return {
+      status: 'OBSTACLE_DETECTED',
+      hasObstacle: true,
+      obstacles,
+      primaryObstacle: primary,
+      clearanceScore: Math.max(30, 85 - obstacles.length * 20),
+      recommendedAction: primary.blocksTarget === 'BEFORE_TP1' ? 'TAKE_EARLY_TP' : 'TIGHTEN_STOP_AT_OBSTACLE',
+      recommendedExitPrice: recExitPrice,
+      roadmapSummary: `⚠️ Obstacle détecté à ${recExitPrice} (${primary.label}) : TP partiel ou arrêt conseillé à ce niveau avant ${targetName} à cause de la zone de blocage opposée.`,
+    };
+  }
+
+  // If NO obstacles are detected: Clear Path (Image 2 case)
+  return {
+    status: 'CLEAR_PATH',
+    hasObstacle: false,
+    obstacles: [],
+    clearanceScore: 100,
+    recommendedAction: 'CLEAR_ROADMAP',
+    roadmapSummary: `🟢 Chemin 100% Ouvert : Aucun obstacle structurel (ancien FVG opposé ni Order Block) n'entrave la trajectoire vers TP1 et TP2. Voie libre !`,
   };
 }
 

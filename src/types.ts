@@ -127,6 +127,29 @@ export interface SMCConfluenceDetails {
   };
 }
 
+export interface PathObstacle {
+  type: 'BEARISH_FVG' | 'BULLISH_FVG' | 'BEARISH_OB' | 'BULLISH_OB' | 'VOLUME_POC' | 'RESISTANCE_WEAK_HIGH' | 'SUPPORT_WEAK_LOW';
+  priceLevel: number;
+  timeframe: string;
+  label: string; // e.g. "Ancien FVG Baissier 30M" or "Order Block Vendeur H4"
+  volumePOC?: number;
+  volumeAmount?: string; // e.g. "4.594K"
+  distancePercent: number; // % distance from entry
+  blocksTarget: 'BEFORE_TP1' | 'BETWEEN_TP1_AND_TP2' | 'BEFORE_TP2';
+  impactDescription: string; // e.g. "Zone de rejet et de blocage vendeur. Sécurisation ou TP anticipé recommandé."
+}
+
+export interface PathObstacleAnalysis {
+  status: 'CLEAR_PATH' | 'OBSTACLE_DETECTED';
+  hasObstacle: boolean;
+  obstacles: PathObstacle[];
+  primaryObstacle?: PathObstacle;
+  clearanceScore: number; // 100 = Voie 100% libre, 40 = Obstacle majeur bloquant
+  recommendedAction: 'TAKE_FULL_TP' | 'TAKE_EARLY_TP' | 'TIGHTEN_STOP_AT_OBSTACLE' | 'CLEAR_ROADMAP';
+  recommendedExitPrice?: number; // Level where trader should secure profits / exit before obstacle
+  roadmapSummary: string; // e.g. "⚠️ Obstacle à 1.3882 (Ancien FVG Baissier) : TP partiel conseillé à ce niveau avant TP2" OR "🟢 Chemin Ouvert : Voie 100% libre vers TP1 et TP2 (aucun FVG opposé bloquant)"
+}
+
 export interface SMCSignal {
   id: string;
   pair: string;
@@ -144,6 +167,7 @@ export interface SMCSignal {
   confluenceScore: number; // e.g. 100 for 4/4, 85 for 3/4, 65 for 2/4
   conditionsMetCount: number; // 2, 3, or 4
   confluences: SMCConfluenceDetails;
+  pathObstacleAnalysis?: PathObstacleAnalysis;
   timestamp: number;
   formattedTime: string;
   tradeTaken: boolean;
@@ -200,6 +224,14 @@ export interface AlertHistoryItem {
   tp1: number;
   tp2: number;
   riskRewardRatio: number;
+  currentPrice?: number;
+  tradeTakenAt?: number;
+  tradeClosedAt?: number;
+  outcome?: 'IN_PROGRESS' | 'WIN_TP1' | 'WIN_TP2' | 'LOSS_SL' | 'CLOSED_MANUAL';
+  pnlPercent?: number;
+  realizedRR?: number;
+  highestReached?: number;
+  lowestReached?: number;
   telegramSent: boolean;
   telegramError?: string;
   status: 'DELIVERED' | 'MUTED' | 'TRADE_TAKEN' | 'LOCAL_ONLY' | 'FAILED';

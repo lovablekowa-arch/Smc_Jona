@@ -1,11 +1,11 @@
 // Lightweight Web Audio API synthesizer for instant trade alert sound chimes (no external mp3 files needed)
-export function playAlertSound(type: 'SNIPER' | 'MEDIUM' | 'TEST') {
+export function playAlertSound(type: 'SNIPER' | 'MEDIUM' | 'TEST' | 'DELIVERED' | 'TP_HIT') {
   try {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
 
-    if (type === 'SNIPER') {
+    if (type === 'SNIPER' || type === 'TP_HIT') {
       // 3-tone harmonic arpeggio (High priority sniper trigger)
       const tones = [587.33, 739.99, 880.0, 1174.66]; // D5, F#5, A5, D6
       tones.forEach((freq, i) => {
@@ -20,8 +20,8 @@ export function playAlertSound(type: 'SNIPER' | 'MEDIUM' | 'TEST') {
         osc.start(ctx.currentTime + i * 0.08);
         osc.stop(ctx.currentTime + i * 0.08 + 0.35);
       });
-    } else if (type === 'MEDIUM') {
-      // 2-tone setup alert
+    } else if (type === 'MEDIUM' || type === 'DELIVERED') {
+      // 2-tone setup alert / delivery chime
       const tones = [523.25, 659.25, 783.99]; // C5, E5, G5
       tones.forEach((freq, i) => {
         const osc = ctx.createOscillator();
