@@ -71,15 +71,62 @@ export function generateClientFallbackSignals(): SMCSignal[] {
     // Confluence conditions
     const isSniper = idx < 8;
     const isMedium = idx >= 8 && idx < 15;
-    const conditionsMetCount = isSniper ? 4 : isMedium ? 3 : 2;
+    const conditionsMetCount = isSniper ? 5 : isMedium ? 4 : 3;
     const confluenceGrade = isSniper ? 'SNIPER' : isMedium ? 'MEDIUM' : 'WATCHLIST';
-    const confluenceScore = isSniper ? 98 : isMedium ? 85 : 65;
+    const confluenceScore = isSniper ? 100 : isMedium ? 85 : 65;
 
     const fvgLow = isBuy ? currentPrice * 0.997 : currentPrice * 1.001;
     const fvgHigh = isBuy ? currentPrice * 0.999 : currentPrice * 1.003;
     const pocPrice = Number(((fvgLow + fvgHigh) / 2).toFixed(pair.decimals));
 
     const isPriceInside = idx % 3 === 0;
+
+    // Generate 26 clean candles illustrating the SMC setup
+    const candles = [];
+    const candleCount = 26;
+    let currP = isBuy ? currentPrice * 0.985 : currentPrice * 1.015;
+    const timeStep = 30 * 60 * 1000; // 30 min per candle
+    const startTime = now - candleCount * timeStep;
+
+    for (let cIdx = 0; cIdx < candleCount; cIdx++) {
+      const cTime = startTime + cIdx * timeStep;
+      let openP = currP;
+      let closeP: number;
+      let highP: number;
+      let lowP: number;
+
+      if (cIdx < 12) {
+        // Initial impulse building the trend & leaving FVG
+        const step = isBuy ? (currentPrice * 1.005 - openP) * 0.15 : (currentPrice * 0.995 - openP) * 0.15;
+        closeP = openP + step + (Math.sin(cIdx) * currentPrice * 0.0008);
+      } else if (cIdx < 20) {
+        // Retracement pulling back into FVG zone
+        const targetRetrace = (fvgLow + fvgHigh) / 2;
+        const step = (targetRetrace - openP) * 0.25;
+        closeP = openP + step;
+      } else if (cIdx === 24) {
+        // Strong displacement / confirmation candle
+        closeP = isBuy ? openP + currentPrice * 0.0035 : openP - currentPrice * 0.0035;
+      } else {
+        // Current active candle near entry
+        closeP = currentPrice;
+      }
+
+      const bodyMax = Math.max(openP, closeP);
+      const bodyMin = Math.min(openP, closeP);
+      highP = bodyMax + Math.abs(currentPrice * 0.0009);
+      lowP = bodyMin - Math.abs(currentPrice * 0.0009);
+      currP = closeP;
+
+      candles.push({
+        time: cTime,
+        open: Number(openP.toFixed(pair.decimals)),
+        high: Number(highP.toFixed(pair.decimals)),
+        low: Number(lowP.toFixed(pair.decimals)),
+        close: Number(closeP.toFixed(pair.decimals)),
+        volume: Math.floor(1000 + Math.random() * 4000),
+      });
+    }
 
     return {
       id: `${pair.id}_${now}`,
@@ -100,6 +147,7 @@ export function generateClientFallbackSignals(): SMCSignal[] {
       timestamp: now,
       formattedTime: timeStr,
       tradeTaken: false,
+      candles,
       confluences: {
         condition1_HTFTrend: {
           satisfied: true,
@@ -161,7 +209,17 @@ export function generateClientFallbackSignals(): SMCSignal[] {
             discountPercentage: 68.5,
             isFavorable: true,
           },
-          summary: `Prix en zone ${isBuy ? 'DISCOUNT OTE (0.705)' : 'PREMIUM OTE (0.618)'} - Entrée Institutionnelle optimale`,
+          retracementConfirmation: {
+            inFVGZone: true,
+            pullbackFinished: true,
+            strongCandleConfirmed: true,
+            candleDescription: isBuy
+              ? '🔥 Forte bougie impulsive haussière (Corps 78%, rejet bas). Fin du retracement baissier confirmée : reprise du flux acheteur institutionnel !'
+              : '🔥 Forte bougie impulsive baissière (Corps 82%, rejet haut). Fin du retracement haussier confirmée : reprise du flux vendeur institutionnel !',
+            rejectionCandleBodySize: 0.35,
+            displacementScore: 92,
+          },
+          summary: `Prix en zone ${isBuy ? 'DISCOUNT OTE (0.705)' : 'PREMIUM OTE (0.618)'} | Retracement terminé et validé par forte bougie de confirmation`,
         },
         condition4_LiquiditySweep: {
           satisfied: isSniper || isMedium,
@@ -180,6 +238,73 @@ export function generateClientFallbackSignals(): SMCSignal[] {
           ],
           summary: `Balayage ${isBuy ? 'SSL' : 'BSL'} confirmé avec cibles de liquidités restantes TP1/TP2`,
         },
+        condition5_RSI10: {
+          satisfied: true,
+          rsiInfo: {
+            rsi10_H1: isBuy ? 52.4 : 46.8,
+            rsi10_M30: isBuy ? 58.1 : 41.2,
+            isOverbought: false,
+            isOversold: false,
+            passed: true,
+            summary: isBuy
+              ? '✅ RSI 10 Valide (H1: 52.4 | M30: 58.1 < 70) : Voie libre pour l\'Achat'
+              : '✅ RSI 10 Valide (H1: 46.8 | M30: 41.2 > 30) : Voie libre pour la Vente',
+          },
+          summary: isBuy ? 'RSI 10 H1/M30 optimal (< 70)' : 'RSI 10 H1/M30 optimal (> 30)',
+        },
+      },
+      signalType: idx % 4 === 3 ? 'IFVG_RETEST_CHOCH' : 'HIGH_PROBABILITY_TREND',
+      relativeTimeStr: 'Il y a 3 min',
+      isMissed: false,
+      isArchived: false,
+      pathObstacleAnalysis: (pair.symbol.includes('USDCAD') || idx % 3 === 1) ? {
+        status: 'OBSTACLE_DETECTED',
+        hasObstacle: true,
+        obstacles: [
+          {
+            type: isBuy ? 'BEARISH_FVG' : 'BULLISH_FVG',
+            priceLevel: isBuy ? Number((entryPrice + (tp1 - entryPrice) * 0.85).toFixed(pair.decimals)) : Number((entryPrice - (entryPrice - tp1) * 0.85).toFixed(pair.decimals)),
+            timeframe: '30M',
+            label: isBuy ? 'Ancien FVG Baissier 30M (Obstacle majeur)' : 'Ancien FVG Haussier 30M (Obstacle majeur)',
+            volumePOC: isBuy ? Number((entryPrice + (tp1 - entryPrice) * 0.86).toFixed(pair.decimals)) : Number((entryPrice - (entryPrice - tp1) * 0.86).toFixed(pair.decimals)),
+            volumeAmount: '4.594K',
+            distancePercent: 0.45,
+            blocksTarget: 'BEFORE_TP1',
+            impactDescription: 'Zone de blocage et de rejet avec gros volume POC. Prise de TP partiel ou arrêt conseillé à ce niveau avant TP2.',
+          },
+          {
+            type: isBuy ? 'BEARISH_OB' : 'BULLISH_OB',
+            priceLevel: isBuy ? Number((entryPrice + (tp2 - entryPrice) * 0.92).toFixed(pair.decimals)) : Number((entryPrice - (entryPrice - tp2) * 0.92).toFixed(pair.decimals)),
+            timeframe: '4H',
+            label: isBuy ? 'Order Block Vendeur H4 (-5.271K)' : 'Order Block Acheteur H4 (+5.271K)',
+            volumeAmount: '5.271K',
+            distancePercent: 0.95,
+            blocksTarget: 'BEFORE_TP2',
+            impactDescription: 'Mur institutionnel de liquidité opposée.',
+          }
+        ],
+        primaryObstacle: {
+          type: isBuy ? 'BEARISH_FVG' : 'BULLISH_FVG',
+          priceLevel: isBuy ? Number((entryPrice + (tp1 - entryPrice) * 0.85).toFixed(pair.decimals)) : Number((entryPrice - (entryPrice - tp1) * 0.85).toFixed(pair.decimals)),
+          timeframe: '30M',
+          label: isBuy ? 'Ancien FVG Baissier 30M (Zone 4.594K)' : 'Ancien FVG Haussier 30M (Zone 4.594K)',
+          volumePOC: isBuy ? Number((entryPrice + (tp1 - entryPrice) * 0.86).toFixed(pair.decimals)) : Number((entryPrice - (entryPrice - tp1) * 0.86).toFixed(pair.decimals)),
+          volumeAmount: '4.594K',
+          distancePercent: 0.45,
+          blocksTarget: 'BEFORE_TP1',
+          impactDescription: 'Zone de blocage et de rejet vendeur. Sécurisation ou TP anticipé recommandé.',
+        },
+        clearanceScore: 45,
+        recommendedAction: 'TAKE_EARLY_TP',
+        recommendedExitPrice: isBuy ? Number((entryPrice + (tp1 - entryPrice) * 0.85).toFixed(pair.decimals)) : Number((entryPrice - (entryPrice - tp1) * 0.85).toFixed(pair.decimals)),
+        roadmapSummary: `⚠️ Obstacle à ${isBuy ? (entryPrice + (tp1 - entryPrice) * 0.85).toFixed(pair.decimals) : (entryPrice - (entryPrice - tp1) * 0.85).toFixed(pair.decimals)} (Ancien FVG Baissier) : TP partiel ou arrêt conseillé à ce niveau avant TP2.`,
+      } : {
+        status: 'CLEAR_PATH',
+        hasObstacle: false,
+        obstacles: [],
+        clearanceScore: 100,
+        recommendedAction: 'CLEAR_ROADMAP',
+        roadmapSummary: '🟢 Chemin Ouvert : Voie 100% libre vers TP1 et TP2 (aucun FVG opposé ni OB bloquant).',
       },
     };
   });

@@ -27,7 +27,7 @@ async function startServer() {
   app.get('/api/health', (req, res) => {
     res.json({
       status: 'ok',
-      engine: 'SMC 4-Confluences & Liquidity Scanner',
+      engine: 'SMC 5-Confluences & Liquidity Scanner',
       timestamp: Date.now(),
     });
   });

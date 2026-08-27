@@ -257,7 +257,7 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
         telegramError,
         status: telegramSent ? 'DELIVERED' : (hasTelegram ? 'FAILED' : 'LOCAL_ONLY'),
         alertType: 'SIGNAL_CREATED',
-        detailsSummary: `${signal.conditionsMetCount}/4 Confluences | Entrée ${signal.entryPrice.toFixed(4)} | TP1 ${signal.tp1.toFixed(4)}`,
+        detailsSummary: `${signal.conditionsMetCount}/5 Confluences | Entrée ${signal.entryPrice > 500 ? signal.entryPrice.toFixed(2) : signal.entryPrice.toFixed(4)} | TP1 ${signal.tp1 > 500 ? signal.tp1.toFixed(2) : signal.tp1.toFixed(4)}`,
       });
     }
 

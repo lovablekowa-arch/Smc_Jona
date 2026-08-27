@@ -15,6 +15,8 @@ import {
   PathObstacle,
   PathObstacleAnalysis,
   RestingLiquidity,
+  RetracementConfirmation,
+  RSIFilterInfo,
   SignalDirection,
   SMCConfluenceDetails,
   SMCSignal,
@@ -30,6 +32,37 @@ function calculateEMA(values: number[], period: number): number {
     ema = values[i] * k + ema * (1 - k);
   }
   return ema;
+}
+
+// Helper: Calculate RSI (Relative Strength Index)
+function calculateRSI(closes: number[], period = 10): number {
+  if (closes.length <= period) return 50;
+  let gains = 0;
+  let losses = 0;
+
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) gains += diff;
+    else losses -= diff;
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff >= 0) {
+      avgGain = (avgGain * (period - 1) + diff) / period;
+      avgLoss = (avgLoss * (period - 1)) / period;
+    } else {
+      avgGain = (avgGain * (period - 1)) / period;
+      avgLoss = (avgLoss * (period - 1) - diff) / period;
+    }
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return Number((100 - 100 / (1 + rs)).toFixed(1));
 }
 
 // Evaluate trend on a specific timeframe candles
@@ -68,11 +101,30 @@ function evaluateTimeframeTrend(candles: Candle[], tf: '1D' | '4H' | '30M' | '15
     structure = bias === 'BULLISH' ? 'HH/HL' : (bias === 'BEARISH' ? 'LH/LL' : 'RANGING');
   }
 
+  // Check if FVG exists in this timeframe
+  let fvgPresent = false;
+  let fvgType: 'BULLISH' | 'BEARISH' | undefined;
+  for (let i = candles.length - 1; i >= Math.max(2, candles.length - 8); i--) {
+    const c1 = candles[i - 2];
+    const c3 = candles[i];
+    if (c3.low > c1.high) {
+      fvgPresent = true;
+      fvgType = 'BULLISH';
+      break;
+    } else if (c3.high < c1.low) {
+      fvgPresent = true;
+      fvgType = 'BEARISH';
+      break;
+    }
+  }
+
   return {
     timeframe: tf,
     bias,
     structure,
     emaAlignment: (bias === 'BULLISH' && latestClose > ema20) || (bias === 'BEARISH' && latestClose < ema20),
+    fvgPresent,
+    fvgType,
   };
 }
 
@@ -554,8 +606,132 @@ function detectFVGandOB(
   };
 }
 
+// Detect Retracement into FVG and Confirmation by a Strong Displacement Candle in Trend Direction
+function detectRetracementConfirmation(
+  m30Candles: Candle[],
+  m15Candles: Candle[],
+  direction: SignalDirection,
+  fvgInfo?: FVGInfo
+): RetracementConfirmation {
+  const candles = m15Candles.length > 5 ? m15Candles : m30Candles;
+  const lastCandle = candles[candles.length - 1];
+  const prevCandle = candles[candles.length - 2] || lastCandle;
+
+  const inFVGZone = fvgInfo
+    ? fvgInfo.isPriceInsideFVG ||
+      fvgInfo.fvgRetracementState === 'TESTING_POC' ||
+      fvgInfo.fvgRetracementState === 'APPROACHING' ||
+      fvgInfo.fvgRetracementState === 'INSIDE_GAP'
+    : true;
+
+  const candleRange = Math.max(0.00001, lastCandle.high - lastCandle.low);
+  const bodySize = Math.abs(lastCandle.close - lastCandle.open);
+  const bodyRatio = bodySize / candleRange;
+  const bodyPercent = Number(((bodySize / (lastCandle.close || 1)) * 100).toFixed(3));
+
+  let strongCandleConfirmed = false;
+  let candleDescription = '';
+  let displacementScore = 75;
+
+  if (direction === 'BUY') {
+    // Bullish confirmation: Candle is bullish (close > open), strong body closing near top
+    const lowerWick = Math.min(lastCandle.open, lastCandle.close) - lastCandle.low;
+    const isBullishImpulse =
+      lastCandle.close > lastCandle.open &&
+      (bodyRatio >= 0.52 || lowerWick > bodySize * 0.8) &&
+      lastCandle.close >= prevCandle.high * 0.9992;
+
+    if (isBullishImpulse) {
+      strongCandleConfirmed = true;
+      displacementScore = Math.min(100, Math.round(75 + bodyRatio * 25));
+      candleDescription = `🔥 Forte bougie impulsive haussière (Corps ${(bodyRatio * 100).toFixed(0)}%, rejet du bas validé). Fin du retracement baissier confirmée : reprise immédiate du flux acheteur institutionnel !`;
+    } else {
+      strongCandleConfirmed = lastCandle.close >= lastCandle.open;
+      displacementScore = 65;
+      candleDescription = `Bougie haussière confirmant le rebond sur la zone d'achat FVG. Retracement maîtrisé.`;
+    }
+  } else {
+    // Bearish confirmation: Candle is bearish (close < open), strong body closing near low
+    const upperWick = lastCandle.high - Math.max(lastCandle.open, lastCandle.close);
+    const isBearishImpulse =
+      lastCandle.close < lastCandle.open &&
+      (bodyRatio >= 0.52 || upperWick > bodySize * 0.8) &&
+      lastCandle.close <= prevCandle.low * 1.0008;
+
+    if (isBearishImpulse) {
+      strongCandleConfirmed = true;
+      displacementScore = Math.min(100, Math.round(75 + bodyRatio * 25));
+      candleDescription = `🔥 Forte bougie impulsive baissière (Corps ${(bodyRatio * 100).toFixed(0)}%, rejet du haut validé). Fin du retracement haussier confirmée : reprise immédiate du flux vendeur institutionnel !`;
+    } else {
+      strongCandleConfirmed = lastCandle.close <= lastCandle.open;
+      displacementScore = 65;
+      candleDescription = `Bougie baissière confirmant le rejet sous la zone de vente FVG. Retracement maîtrisé.`;
+    }
+  }
+
+  return {
+    inFVGZone,
+    pullbackFinished: strongCandleConfirmed,
+    strongCandleConfirmed,
+    candleDescription,
+    rejectionCandleBodySize: bodyPercent,
+    displacementScore,
+  };
+}
+
+// Evaluate RSI 10 in H1 and M30 (Never buy when RSI > 70, never sell when RSI < 30)
+function evaluateRSIFilter(
+  h1Candles: Candle[],
+  m30Candles: Candle[],
+  direction: SignalDirection
+): { satisfied: boolean; rsiInfo: RSIFilterInfo; summary: string } {
+  const rsi10_H1 = calculateRSI(h1Candles.map((c) => c.close), 10);
+  const rsi10_M30 = calculateRSI(m30Candles.map((c) => c.close), 10);
+
+  const isOverbought = rsi10_H1 >= 70 || rsi10_M30 >= 70;
+  const isOversold = rsi10_H1 <= 30 || rsi10_M30 <= 30;
+  let passed = false;
+  let summary = '';
+
+  if (direction === 'BUY') {
+    if (isOverbought) {
+      passed = false;
+      summary = `⚠️ RSI 10 Suracheté (> 70) [H1: ${rsi10_H1} | M30: ${rsi10_M30}] : ACHAT INTERDIT (Risque d'épuisement)`;
+    } else {
+      passed = true;
+      summary = `✅ RSI 10 Valide & Sain (< 70) [H1: ${rsi10_H1} | M30: ${rsi10_M30}] : Voie libre pour l'Achat`;
+    }
+  } else {
+    // SELL
+    if (isOversold) {
+      passed = false;
+      summary = `⚠️ RSI 10 Survendu (< 30) [H1: ${rsi10_H1} | M30: ${rsi10_M30}] : VENTE INTERDITE (Risque d'épuisement)`;
+    } else {
+      passed = true;
+      summary = `✅ RSI 10 Valide & Sain (> 30) [H1: ${rsi10_H1} | M30: ${rsi10_M30}] : Voie libre pour la Vente`;
+    }
+  }
+
+  return {
+    satisfied: passed,
+    rsiInfo: {
+      rsi10_H1,
+      rsi10_M30,
+      isOverbought,
+      isOversold,
+      passed,
+      summary,
+    },
+    summary,
+  };
+}
+
 // Calculate Fibonacci Dealing Range (Discount vs Premium)
-function calculateFibonacci(candles: Candle[], direction: SignalDirection): { satisfied: boolean; fiboData: FibonacciZone; summary: string } {
+function calculateFibonacci(
+  candles: Candle[],
+  direction: SignalDirection,
+  retracementConf?: RetracementConfirmation
+): { satisfied: boolean; fiboData: FibonacciZone; retracementConfirmation?: RetracementConfirmation; summary: string } {
   const window = candles.slice(-30);
   let swingHigh = -Infinity;
   let swingLow = Infinity;
@@ -594,13 +770,15 @@ function calculateFibonacci(candles: Candle[], direction: SignalDirection): { sa
     isFavorable,
   };
 
+  const candleInfo = retracementConf?.candleDescription ? ` | ${retracementConf.candleDescription}` : '';
   const summary = direction === 'BUY'
-    ? `Zone DISCOUNT (${percentFromLow.toFixed(1)}% < 50% Fibo) | OTE optimal 62-79%`
-    : `Zone PREMIUM (${percentFromLow.toFixed(1)}% > 50% Fibo) | OTE optimal 62-79%`;
+    ? `Zone DISCOUNT (${percentFromLow.toFixed(1)}% < 50% Fibo) | OTE optimal 62-79%${candleInfo}`
+    : `Zone PREMIUM (${percentFromLow.toFixed(1)}% > 50% Fibo) | OTE optimal 62-79%${candleInfo}`;
 
   return {
-    satisfied: isFavorable,
+    satisfied: isFavorable && (retracementConf ? retracementConf.pullbackFinished : true),
     fiboData,
+    retracementConfirmation: retracementConf,
     summary,
   };
 }
@@ -887,22 +1065,25 @@ export async function analyzePairSMC(
 ): Promise<SMCSignal> {
   const pair = PAIRS_CATALOG.find((p) => p.id === pairId) || PAIRS_CATALOG[0];
 
-  // Fetch or generate multi-timeframe candles (1D, 4H, 30M, 15M)
+  // Fetch or generate multi-timeframe candles (1D, 4H, 1H, 30M, 15M)
   let dCandles: Candle[];
   let h4Candles: Candle[];
+  let h1Candles: Candle[];
   let m30Candles: Candle[];
   let m15Candles: Candle[];
 
   if (pair.binanceSymbol) {
-    [dCandles, h4Candles, m30Candles, m15Candles] = await Promise.all([
+    [dCandles, h4Candles, h1Candles, m30Candles, m15Candles] = await Promise.all([
       fetchBinanceKlines(pair.binanceSymbol, '1d', 30),
       fetchBinanceKlines(pair.binanceSymbol, '4h', 40),
+      fetchBinanceKlines(pair.binanceSymbol, '1h', 50),
       fetchBinanceKlines(pair.binanceSymbol, '30m', 60),
       fetchBinanceKlines(pair.binanceSymbol, '15m', 60),
     ]);
   } else {
     dCandles = generateSyntheticCandles(pair.id, '1d', 30);
     h4Candles = generateSyntheticCandles(pair.id, '4h', 40);
+    h1Candles = generateSyntheticCandles(pair.id, '1h', 50);
     m30Candles = generateSyntheticCandles(pair.id, '30m', 60);
     m15Candles = generateSyntheticCandles(pair.id, '15m', 60);
   }
@@ -959,11 +1140,22 @@ export async function analyzePairSMC(
     binsCount
   );
 
-  // 3. Condition 3: Fibonacci Dealing Range (Discount / Premium)
-  const condition3_Fibonacci = calculateFibonacci(m30Candles, direction);
+  // Retracement Confirmation Candle in M30/M15
+  const retracementConfirmation = detectRetracementConfirmation(
+    m30Candles,
+    m15Candles,
+    direction,
+    condition2_FVG_OB.recentUnmitigatedFVG
+  );
+
+  // 3. Condition 3: Fibonacci Dealing Range (Discount / Premium) + Retracement Confirmation
+  const condition3_Fibonacci = calculateFibonacci(m30Candles, direction, retracementConfirmation);
 
   // 4. Condition 4: Liquidity Sweep & Rejection
   const condition4_LiquiditySweep = detectLiquiditySweeps(m30Candles, direction);
+
+  // 5. Condition 5: RSI 10 Filter (H1 & M30)
+  const condition5_RSI10 = evaluateRSIFilter(h1Candles, m30Candles, direction);
 
   // Count satisfied conditions
   let conditionsCount = 0;
@@ -971,8 +1163,17 @@ export async function analyzePairSMC(
   if (condition2_FVG_OB.satisfied) conditionsCount++;
   if (condition3_Fibonacci.satisfied) conditionsCount++;
   if (condition4_LiquiditySweep.satisfied) conditionsCount++;
+  if (condition5_RSI10.satisfied) conditionsCount++;
 
-  // Ensure high quality signal distribution for actionable trading
+  // Determine Signal Type (High Probability Trend vs IFVG Retest & CHoCH)
+  const isIFVGSignal =
+    !!condition2_FVG_OB.inversionFVG &&
+    condition2_FVG_OB.inversionFVG.retested &&
+    !htfAligned;
+  const signalType: 'HIGH_PROBABILITY_TREND' | 'IFVG_RETEST_CHOCH' = isIFVGSignal
+    ? 'IFVG_RETEST_CHOCH'
+    : 'HIGH_PROBABILITY_TREND';
+
   // Calculate execution levels (Entry, Stop Loss, TP1, TP2)
   const entryPrice = currentPrice;
   let stopLoss: number;
@@ -1016,17 +1217,36 @@ export async function analyzePairSMC(
     condition2_FVG_OB,
     condition3_Fibonacci,
     condition4_LiquiditySweep,
+    condition5_RSI10,
   };
+
+  // Analyze obstacles (opposing FVGs, high volume order blocks) along path to TP1 and TP2
+  const pathObstacleAnalysis = analyzePathObstacles(
+    m30Candles,
+    h4Candles,
+    direction,
+    entryPrice,
+    tp1,
+    tp2
+  );
 
   const now = Date.now();
   const dateObj = new Date(now);
   const formattedTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  // Detect if signal is already missed (price ran away from entry)
+  let isMissed = false;
+  let missedReason: string | undefined;
+  if (!condition5_RSI10.satisfied) {
+    isMissed = false; // Blocked by RSI
+  }
 
   return {
     id: `${pair.id}_${now}`,
     pair: pair.symbol,
     symbol: pair.id,
     category: pair.category,
+    signalType,
     direction,
     currentPrice,
     entryPrice,
@@ -1039,8 +1259,14 @@ export async function analyzePairSMC(
     confluenceScore,
     conditionsMetCount: conditionsCount,
     confluences,
+    pathObstacleAnalysis,
+    candles: m30Candles.slice(-28),
     timestamp: now,
     formattedTime,
+    relativeTimeStr: 'À l\'instant',
+    isMissed,
+    missedReason,
+    isArchived: false,
     tradeTaken: false,
   };
 }

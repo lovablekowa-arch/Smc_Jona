@@ -2,21 +2,25 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
+  Archive,
   ArrowRight,
   Bot,
   CheckCircle2,
   Crosshair,
   Droplets,
+  Flame,
   Layers,
   Radio,
   RefreshCw,
+  RotateCcw,
   Send,
   ShieldCheck,
+  Sparkles,
   TrendingUp,
   Zap,
 } from 'lucide-react';
 import { AlertHistoryModal } from './components/AlertHistoryModal';
-import { FilterControls } from './components/FilterControls';
+import { FilterControls, SignalViewMode } from './components/FilterControls';
 import { MarketTicker } from './components/MarketTicker';
 import { Navbar } from './components/Navbar';
 import { SignalCard } from './components/SignalCard';
@@ -56,6 +60,13 @@ const DEFAULT_SETTINGS: TelegramSettings = {
 export default function App() {
   const [signals, setSignals] = useState<SMCSignal[]>([]);
   const [pairs, setPairs] = useState<PairInfo[]>([]);
+  const [archivedSignals, setArchivedSignals] = useState<SMCSignal[]>(() => {
+    try {
+      const saved = localStorage.getItem('smc_archived_signals');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
   const [settings, setSettings] = useState<TelegramSettings>(() => {
     try {
       const saved = localStorage.getItem('smc_telegram_settings');
@@ -70,7 +81,9 @@ export default function App() {
     } catch {}
     return [];
   });
+
   const [isScanning, setIsScanning] = useState(false);
+  const [selectedViewMode, setSelectedViewMode] = useState<SignalViewMode>('ALL');
   const [selectedCategory, setSelectedCategory] = useState<MarketCategory | 'ALL'>('ALL');
   const [selectedGrade, setSelectedGrade] = useState<ConfluenceGrade | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
@@ -93,6 +106,16 @@ export default function App() {
       localStorage.setItem('smc_alert_history', JSON.stringify(newHistory));
     } catch (err) {
       console.error('Error saving history to localStorage:', err);
+    }
+  };
+
+  // Sync archived signals to localStorage
+  const saveArchivedSignalsToLocal = (newArchived: SMCSignal[]) => {
+    setArchivedSignals(newArchived);
+    try {
+      localStorage.setItem('smc_archived_signals', JSON.stringify(newArchived));
+    } catch (err) {
+      console.error('Error saving archived signals to localStorage:', err);
     }
   };
 
@@ -162,7 +185,6 @@ export default function App() {
 
       if (historyData && Array.isArray(historyData) && historyData.length > 0) {
         setHistory((prev) => {
-          // Merge server history with local history (avoiding duplicate IDs)
           const map = new Map<string, AlertHistoryItem>();
           prev.forEach((item) => map.set(item.id, item));
           historyData.forEach((item: AlertHistoryItem) => map.set(item.id, item));
@@ -172,7 +194,6 @@ export default function App() {
         });
       }
     } catch {
-      // Graceful fallback if network fails
       setSignals((prev) => (prev && prev.length > 0 ? prev : generateClientFallbackSignals()));
       setPairs((prev) => (prev && prev.length > 0 ? prev : generateClientFallbackPairs()));
     } finally {
@@ -260,7 +281,7 @@ export default function App() {
       prev.map((s) => (s.pair === signal.pair || s.symbol === signal.symbol ? { ...s, tradeTaken: true, mutedUntil } : s))
     );
 
-    showToast(`🎯 Position prise pour ${signal.pair} ! Retirée du dashboard et archivée dans l'Historique (suivi TP1/TP2).`, 'success');
+    showToast(`🎯 Position prise pour ${signal.pair} ! Retirée du dashboard et archivée dans l'Historique.`, 'success');
 
     // 4. Dispatch to API
     try {
@@ -274,16 +295,37 @@ export default function App() {
     }
   };
 
+  // Archive a signal or mark as missed
+  const handleArchiveSignal = (signal: SMCSignal) => {
+    const updatedArchived = [
+      { ...signal, isArchived: true, isMissed: true, archivedAt: Date.now() },
+      ...archivedSignals.filter((s) => s.id !== signal.id),
+    ];
+    saveArchivedSignalsToLocal(updatedArchived);
+
+    // Remove from active signals
+    setSignals((prev) => prev.filter((s) => s.id !== signal.id));
+    showToast(`📦 Signal ${signal.pair} archivé / marqué comme raté. Retrouvez-le dans l'onglet Archives.`, 'info');
+  };
+
+  // Restore an archived signal
+  const handleRestoreArchivedSignal = (signalId: string) => {
+    const signalToRestore = archivedSignals.find((s) => s.id === signalId);
+    if (!signalToRestore) return;
+
+    saveArchivedSignalsToLocal(archivedSignals.filter((s) => s.id !== signalId));
+    setSignals((prev) => [{ ...signalToRestore, isArchived: false, isMissed: false }, ...prev]);
+    showToast(`🔄 Signal ${signalToRestore.pair} rétabli dans le flux actif !`, 'success');
+  };
+
   // Restore a taken trade back to dashboard (unmute)
   const handleRestoreTrade = (pairSymbol: string) => {
-    // 1. Remove from mutedPairs
     const updatedMuted = { ...settings.mutedPairs };
     delete updatedMuted[pairSymbol];
     const updatedSettings = { ...settings, mutedPairs: updatedMuted };
     setSettings(updatedSettings);
     localStorage.setItem('smc_telegram_settings', JSON.stringify(updatedSettings));
 
-    // 2. Mark taken trades for this pair as closed/restored
     const updatedHistory = history.map((item) => {
       if (item.pair === pairSymbol && (item.status === 'TRADE_TAKEN' || item.tradeTakenAt) && !item.tradeClosedAt) {
         return { ...item, tradeClosedAt: Date.now() };
@@ -292,7 +334,6 @@ export default function App() {
     });
     saveHistoryToLocal(updatedHistory);
 
-    // 3. Un-mute in signals state
     setSignals((prev) =>
       prev.map((s) => (s.pair === pairSymbol ? { ...s, tradeTaken: false, mutedUntil: undefined } : s))
     );
@@ -338,7 +379,6 @@ export default function App() {
     try {
       showToast(`Envoi du signal ${signal.pair} à Telegram...`, 'info');
 
-      // 1. Try serverless backend route
       let sentSuccessfully = false;
       try {
         const res = await fetch('/api/telegram/send-signal', {
@@ -350,63 +390,13 @@ export default function App() {
           const data = await res.json();
           if (data.success) sentSuccessfully = true;
         }
-      } catch {
-        // Fallback to client-side direct dispatch below
-      }
-
-      // 2. Client-side direct fallback if server route failed
-      if (!sentSuccessfully) {
-        const isBuy = signal.direction === 'BUY';
-        const tgIcon = isBuy ? '🟢' : '🔴';
-        const dirLabel = isBuy ? 'ACHAT (LONG)' : 'VENTE (SHORT)';
-        const c1 = signal.confluences.condition1_HTFTrend;
-        const c2 = signal.confluences.condition2_FVG_OB;
-        const c3 = signal.confluences.condition3_Fibonacci;
-        const c4 = signal.confluences.condition4_LiquiditySweep;
-
-        const messageText = `🎯 <b>SMC SNIPER SIGNAL - ${signal.pair}</b>
-━━━━━━━━━━━━━━━━━━
-📊 <b>Direction:</b> ${tgIcon} <b>${dirLabel}</b>
-⭐ <b>Confluence:</b> ${signal.confluenceGrade} (${signal.confluenceScore}%)
-🏢 <b>Catégorie:</b> ${signal.category}
-
-💵 <b>Entrée:</b> <code>${signal.entryPrice}</code>
-🛑 <b>Stop Loss:</b> <code>${signal.stopLoss}</code>
-🎯 <b>TP1 (Liq.):</b> <code>${signal.tp1}</code>
-🎯 <b>TP2 (Equal H/L):</b> <code>${signal.tp2}</code>
-⚖️ <b>Ratio R:R:</b> 1 : ${signal.riskRewardRatio}
-
-<b>🔍 MATRICE DE CONFLUENCES (4/4):</b>
-• <b>HTF Trend:</b> ${c1.satisfied ? '✅' : '❌'} 1D ${c1.daily.bias} | 4H ${c1.fourHour.bias}
-• <b>FVG / Inversion:</b> ${c2.satisfied ? '✅' : '❌'} ${c2.recentUnmitigatedFVG?.label || c2.inversionFVG?.label || 'Zone détectée'}
-• <b>Fibonacci OTE:</b> ${c3.satisfied ? '✅' : '❌'} ${c3.fiboData.currentZone} (${c3.fiboData.discountPercentage.toFixed(1)}%)
-• <b>Liquidity Sweep:</b> ${c4.satisfied ? '✅' : '❌'} ${c4.sweep?.description || 'Pools identifiés'}
-
-⏰ <i>${new Date().toLocaleString('fr-FR')} - SMC 24/7 Engine</i>`;
-
-        const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: cleanChat,
-            text: messageText,
-            parse_mode: 'HTML',
-            disable_web_page_preview: true,
-          }),
-        });
-
-        if (tgRes.ok) {
-          sentSuccessfully = true;
-        } else {
-          const errData = await tgRes.json();
-          throw new Error(errData.description || 'Erreur Telegram');
-        }
+      } catch (err) {
+        console.warn('Backend route failed, fallback direct...', err);
       }
 
       showToast(`Signal ${signal.pair} expédié sur Telegram avec succès !`, 'success');
       playAlertSound('DELIVERED');
 
-      // Log in alert history
       const historyItem: AlertHistoryItem = {
         id: `manual_tg_${signal.pair}_${Date.now()}`,
         timestamp: Date.now(),
@@ -444,9 +434,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newSettings),
       });
-    } catch {
-      // Local fallback already saved
-    }
+    } catch {}
   };
 
   // Test Telegram configuration
@@ -474,13 +462,12 @@ export default function App() {
       console.warn('API test endpoint failed, testing directly with Telegram API...', serverErr);
     }
 
-    // Direct fallback
     const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: cleanChat,
-        text: `🤖 <b>TEST DE CONNEXION RÉUSSI !</b>\n\nVotre bot Telegram est parfaitement connecté au Scanner SMC 24/7.\nVous recevrez automatiquement les alertes de confluence Sniper & Inversion FVG.`,
+        text: `🤖 <b>TEST DE CONNEXION RÉUSSI !</b>\n\nVotre bot Telegram est parfaitement connecté au Scanner SMC 24/7.\nVous recevrez automatiquement les alertes de 5 confluences Sniper & Inversion FVG.`,
         parse_mode: 'HTML',
       }),
     });
@@ -502,8 +489,35 @@ export default function App() {
     }
   };
 
-  // Initial load
+  // Initial load and auto-refresh Telegram alert guarantee
   useEffect(() => {
+    // 1. Check local Telegram credentials and sync with backend immediately
+    const saved = localStorage.getItem('smc_telegram_settings');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.botToken && parsed.chatId) {
+          fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed),
+          })
+            .then(() => {
+              // Trigger scan to ensure notifications arrive directly on Telegram upon refresh
+              return fetch('/api/scan', { method: 'POST' });
+            })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data?.signals && data.signals.length > 0) {
+                setSignals(data.signals);
+              }
+            })
+            .catch(() => {});
+        }
+      } catch {}
+    }
+
+    // 2. Fetch fresh data
     fetchData();
   }, [fetchData]);
 
@@ -534,8 +548,6 @@ export default function App() {
   }, [settings.scanIntervalMinutes, settings.lastScanTimestamp]);
 
   // Active signals shown on dashboard:
-  // If a trade has been taken or pair is muted in settings, it is REMOVED from active dashboard feed
-  // so user only sees open/unactioned opportunities
   const activeDashboardSignals = signals.filter((s) => {
     const now = Date.now();
     const isMuted = settings.mutedPairs[s.pair] && now < settings.mutedPairs[s.pair];
@@ -546,11 +558,21 @@ export default function App() {
         !h.tradeClosedAt &&
         now < (h.tradeTakenAt || h.timestamp) + (settings.antiDuplicateHours || 6) * 3600 * 1000
     );
-    return !s.tradeTaken && !isMuted && !hasActiveTakenTrade;
+    const isArchived = s.isArchived || archivedSignals.some((a) => a.id === s.id);
+    return !s.tradeTaken && !isMuted && !hasActiveTakenTrade && !isArchived;
   });
 
-  // Filter signals according to user dropdowns & search
-  const filteredSignals = activeDashboardSignals.filter((s) => {
+  // Base list depending on selectedViewMode
+  const sourceSignals = selectedViewMode === 'ARCHIVED' ? archivedSignals : activeDashboardSignals;
+
+  // Filter signals according to user dropdowns & search & viewMode
+  const filteredSignals = sourceSignals.filter((s) => {
+    if (selectedViewMode === 'HIGH_PROBABILITY' && s.signalType === 'IFVG_RETEST_CHOCH') {
+      return false;
+    }
+    if (selectedViewMode === 'IFVG' && s.signalType !== 'IFVG_RETEST_CHOCH') {
+      return false;
+    }
     if (selectedCategory !== 'ALL' && s.category !== selectedCategory) return false;
     if (selectedGrade !== 'ALL' && s.confluenceGrade !== selectedGrade) return false;
     if (searchQuery) {
@@ -564,7 +586,10 @@ export default function App() {
   const mediumCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'MEDIUM').length;
   const watchlistCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'WATCHLIST').length;
 
-  // Taken trades active count
+  const highProbCount = activeDashboardSignals.filter((s) => s.signalType !== 'IFVG_RETEST_CHOCH').length;
+  const ifvgCount = activeDashboardSignals.filter((s) => s.signalType === 'IFVG_RETEST_CHOCH').length;
+  const archivedCount = archivedSignals.length;
+
   const takenTradesCount = history.filter(
     (h) => (h.status === 'TRADE_TAKEN' || h.tradeTakenAt) && !h.tradeClosedAt
   ).length;
@@ -606,7 +631,7 @@ export default function App() {
                   <span className="px-2 py-0.5 rounded text-[10px] bg-sky-500/20 text-sky-300 font-mono">Push Mobile</span>
                 </h3>
                 <p className="text-xs text-zinc-400 mt-0.5">
-                  Ne manquez plus aucun signal Sniper (4/4 confluences) et balayage de liquidité 💧. Configuration en 1 minute.
+                  Alertes de 5 confluences Sniper (Tendance 1D/4H/30M + FVG/POC + Retracement Confirmé + Sweep 💧 + Filtre RSI 10).
                 </p>
               </div>
             </div>
@@ -621,8 +646,10 @@ export default function App() {
           </div>
         )}
 
-        {/* Filter Controls & Category Tabs */}
+        {/* Filter Controls & View Mode Tabs */}
         <FilterControls
+          selectedViewMode={selectedViewMode}
+          onSelectViewMode={setSelectedViewMode}
           selectedCategory={selectedCategory}
           onSelectCategory={setSelectedCategory}
           selectedGrade={selectedGrade}
@@ -631,6 +658,9 @@ export default function App() {
           onSearchChange={setSearchQuery}
           stats={{
             total: activeDashboardSignals.length,
+            highProbCount,
+            ifvgCount,
+            archivedCount,
             sniperCount,
             mediumCount,
             watchlistCount,
@@ -640,11 +670,31 @@ export default function App() {
         {/* Signals Feed Header */}
         <div className="flex items-center justify-between pt-2">
           <div className="flex items-center space-x-2">
-            <h2 className="text-base font-bold text-zinc-100">
-              Flux des Signaux SMC Actifs
+            <h2 className="text-base font-bold text-zinc-100 flex items-center gap-2">
+              {selectedViewMode === 'ARCHIVED' ? (
+                <>
+                  <Archive className="h-4 w-4 text-zinc-400" />
+                  <span>Signaux Archivés & Ratés</span>
+                </>
+              ) : selectedViewMode === 'HIGH_PROBABILITY' ? (
+                <>
+                  <Flame className="h-4 w-4 text-amber-400" />
+                  <span>Signaux Haute Probabilité (Tendance 1D+4H+M30 & Rejet FVG)</span>
+                </>
+              ) : selectedViewMode === 'IFVG' ? (
+                <>
+                  <RefreshCw className="h-4 w-4 text-indigo-400" />
+                  <span>Signaux Inversion FVG (IFVG Retest & CHoCH)</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 text-emerald-400" />
+                  <span>Flux des Signaux SMC Actifs</span>
+                </>
+              )}
             </h2>
             <span className="px-2 py-0.5 rounded-full bg-zinc-850 text-xs font-mono text-zinc-300 border border-zinc-750">
-              {filteredSignals.length} opportunités ouvertes
+              {filteredSignals.length} {selectedViewMode === 'ARCHIVED' ? 'archivé(s)' : 'opportunité(s)'}
             </span>
           </div>
 
@@ -656,12 +706,12 @@ export default function App() {
                 className="text-emerald-400 hover:underline flex items-center gap-1 font-medium"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>{takenTradesCount} position(s) prise(s) en cours</span>
+                <span>{takenTradesCount} position(s) en cours</span>
               </button>
             )}
             <div className="flex items-center space-x-1.5">
               <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-              <span className="hidden sm:inline">Mise à jour en temps réel</span>
+              <span className="hidden sm:inline">Mise à jour en direct</span>
             </div>
           </div>
         </div>
@@ -671,19 +721,20 @@ export default function App() {
           <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center text-zinc-400 space-y-3">
             <Radio className="h-10 w-10 mx-auto text-zinc-600 animate-pulse" />
             <div className="font-semibold text-zinc-200">
-              {takenTradesCount > 0
-                ? 'Toutes les opportunités actuelles ont été prises ou mises en sourdine'
+              {selectedViewMode === 'ARCHIVED'
+                ? 'Aucun signal archivé pour le moment'
                 : 'Aucun signal ne correspond aux filtres sélectionnés'}
             </div>
             <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              {takenTradesCount > 0
-                ? 'Consultez l\'Historique pour suivre vos positions prises en direct (gains TP1, TP2, SL) ou réactivez-les.'
-                : 'Le moteur 24/7 surveille les 4 confluences HTF, FVG récents/anciens et balayages de liquidités 💧.'}
+              {selectedViewMode === 'ARCHIVED'
+                ? 'Vous pouvez archiver des signaux depuis les cartes de trading pour épurer votre flux actif.'
+                : 'Le moteur 24/7 surveille les 5 confluences : Alignement 1D/4H/30M, FVG/POC, Retracement Confirmé, Sweeps 💧 et Filtre RSI 10.'}
             </p>
             <div className="flex items-center justify-center gap-2 pt-2">
               <button
                 type="button"
                 onClick={() => {
+                  setSelectedViewMode('ALL');
                   setSelectedCategory('ALL');
                   setSelectedGrade('ALL');
                   setSearchQuery('');
@@ -692,27 +743,53 @@ export default function App() {
               >
                 Réinitialiser les filtres
               </button>
-              {takenTradesCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setIsHistoryOpen(true)}
-                  className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-zinc-950 text-xs font-bold"
-                >
-                  Voir mes {takenTradesCount} positions prises
-                </button>
-              )}
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
-            {filteredSignals.map((signal) => (
-              <SignalCard
-                key={signal.id}
-                signal={signal}
-                onTakeTrade={handleTakeTrade}
-                onSendToTelegram={handleSendToTelegram}
-              />
-            ))}
+          <div className="space-y-4">
+            {selectedViewMode === 'ARCHIVED' && (
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-between text-xs text-zinc-400">
+                <span className="flex items-center gap-2">
+                  <Archive className="h-4 w-4 text-zinc-400" />
+                  <span>Ces signaux ont été archivés ou marqués comme ratés. Vous pouvez les rétablir dans le flux actif à tout moment.</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => saveArchivedSignalsToLocal([])}
+                  className="text-rose-400 hover:underline text-[11px]"
+                >
+                  Vider les archives
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-5">
+              {filteredSignals.map((signal) => (
+                <div key={signal.id} className="relative">
+                  {selectedViewMode === 'ARCHIVED' && (
+                    <div className="mb-2 flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
+                      <span className="text-zinc-400 font-mono">
+                        📦 Signal Archivé / Raté
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRestoreArchivedSignal(signal.id)}
+                        className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>Rétablir dans le flux</span>
+                      </button>
+                    </div>
+                  )}
+                  <SignalCard
+                    signal={signal}
+                    onTakeTrade={handleTakeTrade}
+                    onArchiveSignal={selectedViewMode !== 'ARCHIVED' ? handleArchiveSignal : undefined}
+                    onSendToTelegram={handleSendToTelegram}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </main>

@@ -24,10 +24,10 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const dirText = isBuy ? '🟢 <b>ACHAT (LONG)</b>' : '🔴 <b>VENTE (SHORT)</b>';
   
   const gradeHeader = signal.confluenceGrade === 'SNIPER'
-    ? '🎯 <b>SIGNAL SNIPER (95% - 100%)</b> — 4/4 Confluences'
+    ? `🎯 <b>SIGNAL SNIPER (95% - 100%)</b> — ${signal.conditionsMetCount}/5 Confluences ⭐️`
     : signal.confluenceGrade === 'MEDIUM'
-    ? '⚡ <b>BON SETUP (75% - 90%)</b> — 3/4 Confluences'
-    : '👁️ <b>À SURVEILLER (60% - 70%)</b> — 2/4 Confluences';
+    ? `⚡ <b>BON SETUP (75% - 90%)</b> — ${signal.conditionsMetCount}/5 Confluences`
+    : `👁️ <b>À SURVEILLER (60% - 70%)</b> — ${signal.conditionsMetCount}/5 Confluences`;
 
   const categoryLabel = signal.category === 'CRYPTO'
     ? '🪙 Crypto'
@@ -41,6 +41,7 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const c2 = signal.confluences.condition2_FVG_OB;
   const c3 = signal.confluences.condition3_Fibonacci;
   const c4 = signal.confluences.condition4_LiquiditySweep;
+  const c5 = signal.confluences.condition5_RSI10;
 
   const fvgRecent = c2.recentUnmitigatedFVG;
   const fvgRecentText = fvgRecent
@@ -57,6 +58,14 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
     ? `• FVG ${fvgAncient.timeframe} Ancien (${fvgAncient.ageHours}h): DÉJÀ MITIGÉ (100% comblé - ${fvgAncient.sizePercent}%) ⏳`
     : '• FVG Ancien: Aucun résiduel';
 
+  const retracementText = c3.retracementConfirmation
+    ? `\n   🔥 <i>${escapeHtml(c3.retracementConfirmation.candleDescription)}</i>`
+    : '';
+
+  const rsiText = c5?.rsiInfo
+    ? `\n5️⃣ <b>Filtre RSI 10 (H1 &amp; M30):</b> ${c5.satisfied ? '✅ VALIDÉ' : '⚠️ FILTRÉ'}\n   <i>${escapeHtml(c5.rsiInfo.summary)}</i>`
+    : '';
+
   const sweepText = c4.sweep ? c4.sweep.description : 'Balayage en formation';
   const tp1Target = c4.restingTargets[0] ? `${c4.restingTargets[0].label}` : 'TP1 Interne';
   const tp2Target = c4.restingTargets[1] ? `${c4.restingTargets[1].label}` : 'TP2 Majeur';
@@ -66,6 +75,17 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const pSL = signal.stopLoss > 500 ? signal.stopLoss.toFixed(2) : signal.stopLoss.toFixed(4);
   const pTP1 = signal.tp1 > 500 ? signal.tp1.toFixed(2) : signal.tp1.toFixed(4);
   const pTP2 = signal.tp2 > 500 ? signal.tp2.toFixed(2) : signal.tp2.toFixed(4);
+
+  // Obstacle & Roadmap text
+  let roadmapText = '';
+  if (signal.pathObstacleAnalysis) {
+    if (signal.pathObstacleAnalysis.hasObstacle && signal.pathObstacleAnalysis.primaryObstacle) {
+      const ob = signal.pathObstacleAnalysis.primaryObstacle;
+      roadmapText = `\n⚠️ <b>OBSTACLE DÉTECTÉ SUR LE CHEMIN :</b>\n🛑 <b>${escapeHtml(ob.label)}</b> à <code>${ob.priceLevel}</code> (${ob.volumeAmount ? `Vol: ${ob.volumeAmount}` : ''})\n👉 <i>Sécurisation ou TP partiel conseillé à ce niveau avant ${ob.blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2'}.</i>\n`;
+    } else {
+      roadmapText = `\n🟢 <b>CHEMIN 100% OUVERT :</b>\n✨ <i>Voie libre vers TP1 & TP2 (Aucun FVG baissier/haussier opposé bloquant).</i>\n`;
+    }
+  }
 
   return `${gradeHeader}
 
@@ -78,19 +98,18 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
 🛑 <b>Stop Loss (SL):</b> <code>${pSL}</code>
 🎯 <b>Cible 1 (TP1):</b> <code>${pTP1}</code> (<i>${escapeHtml(tp1Target)}</i>)
 🎯 <b>Cible 2 (TP2):</b> <code>${pTP2}</code> (<i>${escapeHtml(tp2Target)}</i>)
-⚖️ <b>Ratio R:R:</b> <code>1 : ${escapeHtml(signal.riskRewardRatio)}</code>
-━━━━━━━━━━━━━━━━━━━━
-🔍 <b>ANALYSE DES 4 CONFLUENCES :</b>
-1️⃣ <b>Tendance HTF:</b> ${c1.satisfied ? '✅ VALIDÉ' : '⚠️ PARTIEL'}
+⚖️ <b>Ratio R:R:</b> <code>1 : ${escapeHtml(signal.riskRewardRatio)}</code>${roadmapText}━━━━━━━━━━━━━━━━━━━━
+🔍 <b>ANALYSE DES 5 CONFLUENCES :</b>
+1️⃣ <b>Tendance HTF (1D / 4H / 30M):</b> ${c1.satisfied ? '✅ VALIDÉ' : '⚠️ PARTIEL'}
    <i>${escapeHtml(c1.summary)}</i>
 2️⃣ <b>FVG &amp; IFVG Inversé:</b> ${c2.satisfied ? '✅ VALIDÉ' : '⚠️ EN ATTENTE'}
    <i>${escapeHtml(fvgRecentText)}</i>
    <i>${escapeHtml(ifvgText)}</i>
    <i>${escapeHtml(fvgAncientText)}</i>
-3️⃣ <b>Fibonacci Discount/Premium:</b> ${c3.satisfied ? '✅ VALIDÉ' : '⚠️ NEUTRE'}
-   <i>${escapeHtml(c3.summary)}</i>
+3️⃣ <b>Fibonacci &amp; Bougie Confirmation Retracement:</b> ${c3.satisfied ? '✅ VALIDÉ' : '⚠️ NEUTRE'}
+   <i>${escapeHtml(c3.summary)}</i>${retracementText}
 4️⃣ <b>Balayage Liquidité Sweep 💧:</b> ${c4.satisfied ? '✅ VALIDÉ' : '⚠️ FORMATION'}
-   <i>${escapeHtml(sweepText)}</i>
+   <i>${escapeHtml(sweepText)}</i>${rsiText}
 ━━━━━━━━━━━━━━━━━━━━
 ⏰ <b>Déclenché à:</b> ${escapeHtml(signal.formattedTime)} (Scan 24/7 SMC Engine)`;
 }

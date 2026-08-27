@@ -271,9 +271,9 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {[
-                  { id: 'SNIPER' as ConfluenceGrade, label: '🎯 Sniper (4/4)', desc: '95% - 100% confluence', color: 'emerald' },
-                  { id: 'MEDIUM' as ConfluenceGrade, label: '⚡ Bon Setup (3/4)', desc: '75% - 90% confluence', color: 'amber' },
-                  { id: 'WATCHLIST' as ConfluenceGrade, label: '👁️ À Surveiller (2/4)', desc: '60% - 70% watchlist', color: 'sky' },
+                  { id: 'SNIPER' as ConfluenceGrade, label: '🎯 Sniper (5/5)', desc: '95% - 100% 5 confluences', color: 'emerald' },
+                  { id: 'MEDIUM' as ConfluenceGrade, label: '⚡ Bon Setup (3/5 - 4/5)', desc: '75% - 90% confluence', color: 'amber' },
+                  { id: 'WATCHLIST' as ConfluenceGrade, label: '👁️ À Surveiller (2/5)', desc: '60% - 70% watchlist', color: 'sky' },
                 ].map((tier) => {
                   const active = alertLevels.includes(tier.id);
                   return (

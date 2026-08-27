@@ -4,11 +4,40 @@ export type SignalDirection = 'BUY' | 'SELL';
 
 export type ConfluenceGrade = 'SNIPER' | 'MEDIUM' | 'WATCHLIST';
 
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface RSIFilterInfo {
+  rsi10_H1: number;
+  rsi10_M30: number;
+  isOverbought: boolean; // RSI > 70
+  isOversold: boolean; // RSI < 30
+  passed: boolean; // For BUY: <= 70, for SELL: >= 30
+  summary: string;
+}
+
+export interface RetracementConfirmation {
+  inFVGZone: boolean;
+  pullbackFinished: boolean; // True when strong displacement candle re-enters trend
+  strongCandleConfirmed: boolean;
+  candleDescription: string;
+  rejectionCandleBodySize: number; // in %
+  displacementScore: number; // 0 to 100
+}
+
 export interface TimeframeTrend {
   timeframe: '1D' | '4H' | '30M' | '15M' | '1H';
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   structure: 'HH/HL' | 'LH/LL' | 'RANGING';
   emaAlignment: boolean;
+  fvgPresent?: boolean;
+  fvgType?: 'BULLISH' | 'BEARISH';
 }
 
 export interface FVGVolumeBin {
@@ -112,10 +141,11 @@ export interface SMCConfluenceDetails {
     minFvgThresholdPercent?: number;
     summary: string;
   };
-  // Condition 3: Fibonacci Discount / Premium
+  // Condition 3: Fibonacci Discount / Premium & Retracement Confirmation Candle
   condition3_Fibonacci: {
     satisfied: boolean;
     fiboData: FibonacciZone;
+    retracementConfirmation?: RetracementConfirmation;
     summary: string;
   };
   // Condition 4: Liquidity Sweep & Rejection
@@ -123,6 +153,12 @@ export interface SMCConfluenceDetails {
     satisfied: boolean;
     sweep?: LiquiditySweep;
     restingTargets: RestingLiquidity[];
+    summary: string;
+  };
+  // Condition 5: RSI 10 Filter (H1 & M30)
+  condition5_RSI10: {
+    satisfied: boolean;
+    rsiInfo: RSIFilterInfo;
     summary: string;
   };
 }
@@ -155,6 +191,7 @@ export interface SMCSignal {
   pair: string;
   symbol: string;
   category: MarketCategory;
+  signalType: 'HIGH_PROBABILITY_TREND' | 'IFVG_RETEST_CHOCH';
   direction: SignalDirection;
   currentPrice: number;
   entryPrice: number;
@@ -165,11 +202,17 @@ export interface SMCSignal {
   riskRewardRatio: number;
   confluenceGrade: ConfluenceGrade;
   confluenceScore: number; // e.g. 100 for 4/4, 85 for 3/4, 65 for 2/4
-  conditionsMetCount: number; // 2, 3, or 4
+  conditionsMetCount: number; // 2, 3, 4, or 5
   confluences: SMCConfluenceDetails;
   pathObstacleAnalysis?: PathObstacleAnalysis;
+  candles?: Candle[];
   timestamp: number;
   formattedTime: string;
+  relativeTimeStr?: string; // e.g. "Il y a 6 min"
+  isMissed?: boolean; // True if price has moved significantly away from entry towards TP or beyond SL
+  missedReason?: string; // e.g. "Le prix a déjà couru 70% vers TP1 sans nous"
+  isArchived?: boolean; // Manually or auto-archived
+  archivedAt?: number;
   tradeTaken: boolean;
   tradeTakenAt?: number;
   mutedUntil?: number;

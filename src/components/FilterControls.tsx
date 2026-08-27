@@ -1,8 +1,12 @@
 import React from 'react';
-import { Crosshair, Filter, Layers, Search, Sparkles, Zap } from 'lucide-react';
+import { Archive, Crosshair, Filter, Flame, Layers, RefreshCw, Search, Sparkles, Zap } from 'lucide-react';
 import { ConfluenceGrade, MarketCategory } from '../types';
 
+export type SignalViewMode = 'ALL' | 'HIGH_PROBABILITY' | 'IFVG' | 'ARCHIVED';
+
 interface FilterControlsProps {
+  selectedViewMode: SignalViewMode;
+  onSelectViewMode: (mode: SignalViewMode) => void;
   selectedCategory: MarketCategory | 'ALL';
   onSelectCategory: (cat: MarketCategory | 'ALL') => void;
   selectedGrade: ConfluenceGrade | 'ALL';
@@ -11,6 +15,9 @@ interface FilterControlsProps {
   onSearchChange: (q: string) => void;
   stats: {
     total: number;
+    highProbCount: number;
+    ifvgCount: number;
+    archivedCount: number;
     sniperCount: number;
     mediumCount: number;
     watchlistCount: number;
@@ -18,6 +25,8 @@ interface FilterControlsProps {
 }
 
 export const FilterControls: React.FC<FilterControlsProps> = ({
+  selectedViewMode,
+  onSelectViewMode,
   selectedCategory,
   onSelectCategory,
   selectedGrade,
@@ -28,6 +37,61 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
 }) => {
   return (
     <div className="space-y-3">
+      {/* Top Main Mode Selector: High Probability / IFVG / All / Archives */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 rounded-2xl bg-zinc-900/90 border border-zinc-800">
+        <button
+          type="button"
+          onClick={() => onSelectViewMode('ALL')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+            selectedViewMode === 'ALL'
+              ? 'bg-zinc-800 text-zinc-100 shadow-sm border border-zinc-700'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+          }`}
+        >
+          <Sparkles className="h-3.5 w-3.5 text-zinc-300" />
+          <span>Tous les Signaux ({stats.total})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelectViewMode('HIGH_PROBABILITY')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+            selectedViewMode === 'HIGH_PROBABILITY'
+              ? 'bg-amber-950 border border-amber-500/50 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+              : 'text-zinc-400 hover:text-amber-300 hover:bg-amber-950/30'
+          }`}
+        >
+          <Flame className="h-3.5 w-3.5 text-amber-400" />
+          <span>⭐ Haute Probabilité (1D+4H+M30) ({stats.highProbCount})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelectViewMode('IFVG')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+            selectedViewMode === 'IFVG'
+              ? 'bg-indigo-950 border border-indigo-500/50 text-indigo-300 shadow-[0_0_15px_rgba(99,102,241,0.2)]'
+              : 'text-zinc-400 hover:text-indigo-300 hover:bg-indigo-950/30'
+          }`}
+        >
+          <RefreshCw className="h-3.5 w-3.5 text-indigo-400" />
+          <span>🔄 Inversion FVG (IFVG & Retest) ({stats.ifvgCount})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelectViewMode('ARCHIVED')}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all ml-auto ${
+            selectedViewMode === 'ARCHIVED'
+              ? 'bg-zinc-800 border border-zinc-600 text-zinc-200 shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+          }`}
+        >
+          <Archive className="h-3.5 w-3.5 text-zinc-400" />
+          <span>📦 Archives & Ratés ({stats.archivedCount})</span>
+        </button>
+      </div>
+
       {/* Category Tabs & Search Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         {/* Market Category Selector */}
@@ -97,7 +161,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
             }`}
           >
             <Crosshair className="h-3.5 w-3.5 text-emerald-400" />
-            <span>🎯 Sniper 4/4 ({stats.sniperCount})</span>
+            <span>🎯 Sniper 5/5 ou 4/5 ({stats.sniperCount})</span>
           </button>
 
           <button
@@ -110,7 +174,7 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
             }`}
           >
             <Zap className="h-3.5 w-3.5 text-amber-400" />
-            <span>⚡ Bon Setup 3/4 ({stats.mediumCount})</span>
+            <span>⚡ Bon Setup 3/5 ({stats.mediumCount})</span>
           </button>
 
           <button
@@ -122,12 +186,12 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
                 : 'bg-zinc-900/50 border-zinc-800 text-sky-400 hover:border-zinc-700'
             }`}
           >
-            <span>👁️ Watchlist 2/4 ({stats.watchlistCount})</span>
+            <span>👁️ Watchlist 2/5 ({stats.watchlistCount})</span>
           </button>
         </div>
 
         <div className="text-xs text-zinc-500 font-mono hidden md:block">
-          Algorithme SMC & Sweeps 💧
+          Algorithme SMC 5 Confluences & RSI 10 💧
         </div>
       </div>
     </div>
