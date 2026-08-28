@@ -124,8 +124,18 @@ export const SignalCard: React.FC<SignalCardProps> = ({
               {signal.category}
             </span>
 
-            {/* Signal Type Badge */}
-            {signal.signalType === 'IFVG_RETEST_CHOCH' ? (
+            {/* Signal Type & Trade Lifecycle Badge */}
+            {signal.setupProgressStatus === 'TRADE_EN_COURS' ? (
+              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold bg-amber-950/90 text-amber-300 border border-amber-500/50 animate-pulse">
+                <RefreshCw className="h-3 w-3" />
+                TRADE EN COURS 🔄
+              </span>
+            ) : signal.setupProgressStatus === 'RETEST_FVG' ? (
+              <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold bg-sky-950/90 text-sky-300 border border-sky-500/50">
+                <Target className="h-3 w-3 text-sky-400" />
+                RETEST FVG PENDANT TRADE 🎯
+              </span>
+            ) : signal.signalType === 'IFVG_RETEST_CHOCH' ? (
               <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-bold bg-indigo-950/90 text-indigo-300 border border-indigo-500/40">
                 <RefreshCw className="h-3 w-3" />
                 IFVG & CHoCH Retest 🔄
@@ -371,7 +381,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-            {/* Condition 1: HTF Trend (1D, 4H, 30M) */}
+            {/* Condition 1: Pure Price Structure & HTF Trend */}
             <div
               className={`p-2.5 rounded-lg border flex items-start space-x-2 ${
                 c1.satisfied
@@ -384,22 +394,47 @@ export const SignalCard: React.FC<SignalCardProps> = ({
                   c1.satisfied ? 'text-emerald-400' : 'text-zinc-600'
                 }`}
               />
-              <div>
-                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <span>1. Tendance Fond (1D / 4H / 30M)</span>
+              <div className="w-full">
+                <div className="font-semibold text-zinc-200 flex items-center justify-between flex-wrap gap-1">
+                  <span>1. Structure Pure &amp; Tendance Multi-TF</span>
                   {c1.satisfied ? (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300">
-                      Alignée OK
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 font-mono">
+                      {c1.isH4DirectorException ? 'H4 DIRECTEUR ⚡' : 'STRUCTURE OK ✅'}
                     </span>
                   ) : (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
-                      Partiel
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-900/60 text-rose-300 font-mono">
+                      {c1.isAccumulationBlocked ? 'ACCUMULATION 🛑' : 'NON ALIGNÉ ⛔'}
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-zinc-400 mt-0.5 leading-tight">
-                  Daily: {c1.daily.bias} | 4H: {c1.fourHour.bias} | 30M: {c1.thirtyMin.bias}
-                </p>
+                
+                {/* Timeframe Swings Grid */}
+                <div className="grid grid-cols-3 gap-1 mt-1.5 text-[10px] font-mono">
+                  <div className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 flex flex-col">
+                    <span className="text-zinc-400">D1 :</span>
+                    <span className={c1.daily?.bias === 'BULLISH' ? 'text-emerald-400 font-bold' : c1.daily?.bias === 'BEARISH' ? 'text-rose-400 font-bold' : 'text-amber-400'}>
+                      {c1.daily?.structure || c1.daily?.bias}
+                    </span>
+                  </div>
+                  <div className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 flex flex-col">
+                    <span className="text-zinc-400">H4 :</span>
+                    <span className={c1.fourHour?.bias === 'BULLISH' ? 'text-emerald-400 font-bold' : c1.fourHour?.bias === 'BEARISH' ? 'text-rose-400 font-bold' : 'text-amber-400'}>
+                      {c1.fourHour?.structure || c1.fourHour?.bias}
+                    </span>
+                  </div>
+                  <div className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 flex flex-col">
+                    <span className="text-zinc-400">M30 :</span>
+                    <span className={c1.thirtyMin?.bias === 'BULLISH' ? 'text-emerald-400 font-bold' : c1.thirtyMin?.bias === 'BEARISH' ? 'text-rose-400 font-bold' : 'text-amber-400'}>
+                      {c1.thirtyMin?.structure || c1.thirtyMin?.bias}
+                    </span>
+                  </div>
+                </div>
+
+                {c1.m15M5RetracementInfo && (
+                  <p className="text-[10px] text-zinc-400 mt-1 italic leading-tight">
+                    {c1.m15M5RetracementInfo}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -438,8 +473,22 @@ export const SignalCard: React.FC<SignalCardProps> = ({
                 </div>
 
                 <div className="text-[11px] space-y-1.5 mt-1.5">
-                  {/* FVG M30 & M15 Sequence details */}
+                  {/* FVG H1, M30 & M15 Sequence details */}
                   <div className="grid grid-cols-1 gap-1">
+                    {c2.fvgH1 && (
+                      <div className="flex items-center justify-between bg-purple-950/40 px-2 py-1 rounded border border-purple-500/30 text-purple-200">
+                        <span className="flex items-center gap-1">
+                          <strong className="text-purple-300 font-mono">FVG H1 (Contexte Majeur) :</strong>
+                          <span className="text-zinc-300">
+                            {c2.fvgH1.low > 500 ? c2.fvgH1.low.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgH1.low.toFixed(4)} — {c2.fvgH1.high > 500 ? c2.fvgH1.high.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgH1.high.toFixed(4)}
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-purple-300 font-mono">
+                          {c2.fvgH1.sizePercent}% ({c2.fvgH1.ageHours}h)
+                        </span>
+                      </div>
+                    )}
+
                     {c2.fvgM30 && (
                       <div className="flex items-center justify-between bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-zinc-300">
                         <span className="flex items-center gap-1">
@@ -457,7 +506,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
                     {c2.fvgM15 && (
                       <div className="flex items-center justify-between bg-emerald-950/40 px-2 py-1 rounded border border-emerald-500/30 text-emerald-200">
                         <span className="flex items-center gap-1">
-                          <strong className="text-emerald-300 font-mono">FVG M15 (Zone d'Entrée &amp; POC) :</strong>
+                          <strong className="text-emerald-300 font-mono">FVG M15 (Point d'Entrée &amp; POC) :</strong>
                           <span className="text-emerald-100">
                             {c2.fvgM15.low > 500 ? c2.fvgM15.low.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgM15.low.toFixed(4)} — {c2.fvgM15.high > 500 ? c2.fvgM15.high.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgM15.high.toFixed(4)}
                           </span>
@@ -510,7 +559,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
               </div>
             </div>
 
-            {/* Condition 3: Retracement FVG & Bougie de Confirmation (Displacement Candle) */}
+            {/* Condition 3: Retracement FVG & Bougie de Confirmation (Displacement Candle) & Internal Liquidity */}
             <div
               className={`p-2.5 rounded-lg border flex items-start space-x-2 ${
                 c3.satisfied
@@ -524,8 +573,8 @@ export const SignalCard: React.FC<SignalCardProps> = ({
                 }`}
               />
               <div>
-                <div className="font-semibold text-zinc-200 flex items-center gap-1.5">
-                  <span>3. Retracement & Bougie Confirmation</span>
+                <div className="font-semibold text-zinc-200 flex items-center gap-1.5 flex-wrap">
+                  <span>3. Retracement ({isBuy ? 'Discount < 50%' : 'Premium > 50%'})</span>
                   <span
                     className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
                       retracementConf?.strongCandleConfirmed
@@ -535,6 +584,11 @@ export const SignalCard: React.FC<SignalCardProps> = ({
                   >
                     {retracementConf?.strongCandleConfirmed ? 'Confirmé 🔥' : 'En Attente'}
                   </span>
+                  {c3.internalLiquiditySwept && (
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-950/90 text-sky-300 border border-sky-500/30 font-mono">
+                      💧 Liquidité Interne Balayée
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-zinc-300 mt-0.5 leading-tight">
                   {retracementConf?.candleDescription || c3.summary}

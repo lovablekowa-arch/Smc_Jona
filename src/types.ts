@@ -31,11 +31,22 @@ export interface RetracementConfirmation {
   displacementScore: number; // 0 to 100
 }
 
+export type MarketStructureType = 'HH/HL' | 'LH/LL' | 'ACCUMULATION_RANGE' | 'NEUTRAL_TRANSITION' | 'RANGING';
+
+export interface StructureSwing {
+  time: number;
+  price: number;
+  type: 'HIGH' | 'LOW';
+  tag: 'HH' | 'HL' | 'LH' | 'LL' | 'EQH' | 'EQL';
+}
+
 export interface TimeframeTrend {
-  timeframe: '1D' | '4H' | '30M' | '15M' | '1H';
+  timeframe: '1D' | '4H' | '1H' | '30M' | '15M' | '5M';
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  structure: 'HH/HL' | 'LH/LL' | 'RANGING';
-  emaAlignment: boolean;
+  structure: MarketStructureType;
+  isAccumulationRange?: boolean;
+  structureLabel?: string; // e.g. "HH / HL (Tendance Haussière)" or "ACCUMULATION / RANGE (Compression)"
+  recentSwings?: StructureSwing[];
   fvgPresent?: boolean;
   fvgType?: 'BULLISH' | 'BEARISH';
 }
@@ -60,6 +71,11 @@ export interface FVGInfo {
   isRecent: boolean; // < 3 hours
   isAncient: boolean; // > 8 hours
   isSignificant: boolean;
+  // FVG Setup Lifecycle & Filtering (MT5 Screenshot rules)
+  setupStatus?: 'FRESH_UNMITIGATED' | 'TRADE_EN_COURS' | 'RETEST_DURING_TRADE' | 'TP_REACHED_EXCLUDED' | 'INVALIDATED_BREACHED';
+  isTradeInProgress?: boolean;
+  tpReachedAndExcluded?: boolean;
+  isBreachedOrInvalidated?: boolean;
   // ChartPrime High Probability & Volume Profile properties
   stdevRatio?: number; // Ta.stdev normalization ratio (e.g. 1.85σ above historical avg)
   highProbability?: boolean; // True when stdevRatio >= filter & high volume
@@ -122,42 +138,69 @@ export interface RestingLiquidity {
   distancePercent: number;
 }
 
+export type TrendAlignmentStatus =
+  | 'BULLISH_ALIGNED'
+  | 'BEARISH_ALIGNED'
+  | 'BULLISH_D1_H4_M30_RETRACEMENT'
+  | 'BEARISH_D1_H4_M30_RETRACEMENT'
+  | 'H4_DIRECTOR_D1_COUNTER'
+  | 'CONFLICT_TRANSITION'
+  | 'ACCUMULATION_RANGE_BLOCKED';
+
 export interface SMCConfluenceDetails {
-  // Condition 1: HTF Alignment (1D, 4H, 30M)
+  // Condition 1: HTF Alignment (1D, 4H, 30M) - Pure Price Structure (HH/HL, LH/LL, ACCUMULATION/RANGE)
   condition1_HTFTrend: {
     satisfied: boolean;
+    alignmentStatus: TrendAlignmentStatus;
+    isH4DirectorException?: boolean;
+    isAccumulationBlocked?: boolean;
     daily: TimeframeTrend;
     fourHour: TimeframeTrend;
     thirtyMin: TimeframeTrend;
+    fifteenMin?: TimeframeTrend;
+    fiveMin?: TimeframeTrend;
+    m15M5RetracementInfo?: string;
     summary: string;
   };
-  // Condition 2: FVG Suite M30 & M15 (Suite obligatoire pour confirmation d'entrée en M15/M30 + FVG H4 et Daily informatifs)
+  // Condition 2: FVG Suite H1, M30 & M15 (Filtrage de fraîcheur, alignement Multi-TF, réaction & statut Trade En Cours)
   condition2_FVG_OB: {
     satisfied: boolean;
-    // Suite prioritaire M30 & M15 (Respect strict de l'alignement M30 + M15)
-    fvgSequenceM30M15Confirmed: boolean;
-    fvgM30?: FVGInfo; // FVG M30 (Structure intermédiaire)
+    // Suite & Hiérarchie des Timeframes (H1/M30 Contexte majeur + M15 Confirmation Entrée)
+    fvgH1?: FVGInfo; // FVG H1 (Setup & Contexte principal - Poids fort)
+    fvgM30?: FVGInfo; // FVG M30 (Structure intermédiaire - Poids fort)
     fvgM15?: FVGInfo; // FVG M15 (Zone de précision d'entrée / POC)
-    entryConfirmationTimeframe: '15M' | '30M'; // Timeframe où la confirmation d'entrée a lieu (M15 ou M30)
+    fvgSequenceM30M15Confirmed: boolean;
+    isConfluentH1_M15?: boolean; // Alignement H1/M30 + M15
+    entryConfirmationTimeframe: '15M' | '30M' | '1H';
     entryTapInStatus?: 'CONFIRMED_INSIDE' | 'TESTING_POC' | 'APPROACHING' | 'REJECTING_POC';
 
+    // Cycle de vie du Trade & Règles d'exclusion MT5
+    setupStatus?: 'FRESH_UNMITIGATED' | 'TRADE_EN_COURS' | 'RETEST_DURING_TRADE' | 'TP_REACHED_EXCLUDED' | 'INVALIDATED_BREACHED';
+    targetRecentSwingTp1?: number; // Sommet/Creux récent servant de premier objectif TP
+    originSwingSl?: number; // Origine de l'impulsion servant de SL
+
     // Confluences Macro Informatives (H4 et Daily)
-    macroFvgH4?: FVGInfo; // FVG H4 informatif pour confirmation macro
-    macroFvgDaily?: FVGInfo; // FVG 1D informatif pour confirmation macro
+    macroFvgH4?: FVGInfo;
+    macroFvgDaily?: FVGInfo;
     macroFvgInformativeSummary?: string;
 
     // Backward-compatible fields
     recentUnmitigatedFVG?: FVGInfo;
     ancientMitigatedFVG?: FVGInfo;
-    inversionFVG?: IFVGInfo; // Inversion Fair Value Gap
+    inversionFVG?: IFVGInfo;
     orderBlock?: OrderBlockInfo;
     minFvgThresholdPercent?: number;
     summary: string;
   };
-  // Condition 3: Fibonacci Discount / Premium & Retracement Confirmation Candle
+  // Condition 3: Fibonacci Discount / Premium & Retracement Confirmation Candle & Internal Liquidity
   condition3_Fibonacci: {
     satisfied: boolean;
     fiboData: FibonacciZone;
+    dealZoneType?: 'DISCOUNT' | 'PREMIUM';
+    internalLiquiditySwept?: boolean;
+    internalLiquidityDescription?: string;
+    fiboRetracement50Level?: number;
+    fiboRetracement618Level?: number;
     retracementConfirmation?: RetracementConfirmation;
     summary: string;
   };
@@ -206,6 +249,9 @@ export interface SMCSignal {
   category: MarketCategory;
   signalType: 'HIGH_PROBABILITY_TREND' | 'IFVG_RETEST_CHOCH';
   direction: SignalDirection;
+  setupProgressStatus?: 'NOUVEAU_SIGNAL' | 'TRADE_EN_COURS' | 'RETEST_FVG' | 'TP1_ATTEINT_EXCLU' | 'INVALIDÉ_COMBLEMENT';
+  internalLiquiditySwept?: boolean;
+  isMultiTfConfluent?: boolean; // H1 + M15 / M30 + M15 aligned
   currentPrice: number;
   entryPrice: number;
   stopLoss: number;
@@ -216,6 +262,9 @@ export interface SMCSignal {
   confluenceGrade: ConfluenceGrade;
   confluenceScore: number; // e.g. 100 for 4/4, 85 for 3/4, 65 for 2/4
   conditionsMetCount: number; // 2, 3, 4, or 5
+  trendAlignmentStatus?: TrendAlignmentStatus;
+  isH4DirectorException?: boolean;
+  cascadeStatus?: 'CASCADE_ALL_PASSED' | 'STOPPED_CONDITION_1_STRUCTURE' | 'STOPPED_CONDITION_2_FVG' | 'STOPPED_CONDITION_3_FIBO' | 'STOPPED_CONDITION_4_SWEEP';
   confluences: SMCConfluenceDetails;
   pathObstacleAnalysis?: PathObstacleAnalysis;
   candles?: Candle[];

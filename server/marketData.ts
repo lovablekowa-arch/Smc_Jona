@@ -20,30 +20,30 @@ export const PAIRS_CATALOG: Array<{
   basePrice: number;
 }> = [
   // 1. INDICES SYNTHÉTIQUES DERIV VOLATILITY (PRIORITÉ ABSOLUE N°1)
-  { id: 'V75', symbol: 'Volatility 75', name: 'Volatility 75 Index (V75)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 485600.00 },
-  { id: 'V75_1S', symbol: 'Volatility 75 (1s)', name: 'Volatility 75 (1s) Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 893400.00 },
-  { id: 'V100', symbol: 'Volatility 100', name: 'Volatility 100 Index (V100)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 2140.50 },
-  { id: 'V100_1S', symbol: 'Volatility 100 (1s)', name: 'Volatility 100 (1s) Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 21450.00 },
-  { id: 'V50', symbol: 'Volatility 50', name: 'Volatility 50 Index (V50)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 388.40 },
-  { id: 'V50_1S', symbol: 'Volatility 50 (1s)', name: 'Volatility 50 (1s) Index', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 785.60 },
-  { id: 'V25', symbol: 'Volatility 25', name: 'Volatility 25 Index (V25)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 2940.30 },
-  { id: 'V25_1S', symbol: 'Volatility 25 (1s)', name: 'Volatility 25 (1s) Index', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 9840.20 },
-  { id: 'V10', symbol: 'Volatility 10', name: 'Volatility 10 Index (V10)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 6842.15 },
-  { id: 'V10_1S', symbol: 'Volatility 10 (1s)', name: 'Volatility 10 (1s) Index', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 7920.30 },
-  { id: 'CRASH1000', symbol: 'Crash 1000', name: 'Crash 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 5620.80 },
-  { id: 'BOOM1000', symbol: 'Boom 1000', name: 'Boom 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 13420.50 },
-  { id: 'STEP', symbol: 'Step Index', name: 'Step Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 8650.20 },
-  { id: 'JUMP75', symbol: 'Jump 75', name: 'Jump 75 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 365200.00 },
+  { id: 'V100', symbol: 'Volatility 100 (V100)', name: 'Volatility 100 Index (V100)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 2140.50 },
+  { id: 'V100_1S', symbol: 'Volatility 100 (1s) (V100 1s)', name: 'Volatility 100 (1s) Index (V100 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 214500.00 },
+  { id: 'V75', symbol: 'Volatility 75 (V75)', name: 'Volatility 75 Index (V75)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 485600.00 },
+  { id: 'V75_1S', symbol: 'Volatility 75 (1s) (V75 1s)', name: 'Volatility 75 (1s) Index (V75 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 23450.00 },
+  { id: 'V50', symbol: 'Volatility 50 (V50)', name: 'Volatility 50 Index (V50)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 388.40 },
+  { id: 'V50_1S', symbol: 'Volatility 50 (1s) (V50 1s)', name: 'Volatility 50 (1s) Index (V50 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 8785.60 },
+  { id: 'V25', symbol: 'Volatility 25 (V25)', name: 'Volatility 25 Index (V25)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 2940.30 },
+  { id: 'V25_1S', symbol: 'Volatility 25 (1s) (V25 1s)', name: 'Volatility 25 (1s) Index (V25 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 618400.00 },
+  { id: 'V10', symbol: 'Volatility 10 (V10)', name: 'Volatility 10 Index (V10)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 6842.15 },
+  { id: 'V10_1S', symbol: 'Volatility 10 (1s) (V10 1s)', name: 'Volatility 10 (1s) Index (V10 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 792400.00 },
+  { id: 'CRASH1000', symbol: 'Crash 1000 (C1000)', name: 'Crash 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 5620.80 },
+  { id: 'BOOM1000', symbol: 'Boom 1000 (B1000)', name: 'Boom 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 13420.50 },
+  { id: 'STEP', symbol: 'Step Index (STEP)', name: 'Step Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 8650.20 },
+  { id: 'JUMP75', symbol: 'Jump 75 (J75)', name: 'Jump 75 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 365200.00 },
 
   // 2. CRYPTO-MONNAIES (PRIORITÉ N°2 - FLUX DIRECT BINANCE)
-  { id: 'BTCUSDT', symbol: 'BTC/USDT', name: 'Bitcoin', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'BTCUSDT', basePrice: 94250.0 },
-  { id: 'ETHUSDT', symbol: 'ETH/USDT', name: 'Ethereum', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'ETHUSDT', basePrice: 2840.5 },
-  { id: 'SOLUSDT', symbol: 'SOL/USDT', name: 'Solana', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'SOLUSDT', basePrice: 198.2 },
-  { id: 'BNBUSDT', symbol: 'BNB/USDT', name: 'BNB (Binance Coin)', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'BNBUSDT', basePrice: 654.8 },
-  { id: 'XRPUSDT', symbol: 'XRP/USDT', name: 'Ripple XRP', category: 'CRYPTO', decimals: 4, unit: '$', binanceSymbol: 'XRPUSDT', basePrice: 2.4500 },
+  { id: 'BTCUSDT', symbol: 'BTC/USDT (Bitcoin)', name: 'Bitcoin', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'BTCUSDT', basePrice: 94250.0 },
+  { id: 'ETHUSDT', symbol: 'ETH/USDT (Ethereum)', name: 'Ethereum', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'ETHUSDT', basePrice: 2840.5 },
+  { id: 'SOLUSDT', symbol: 'SOL/USDT (Solana)', name: 'Solana', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'SOLUSDT', basePrice: 198.2 },
+  { id: 'BNBUSDT', symbol: 'BNB/USDT (BNB)', name: 'BNB (Binance Coin)', category: 'CRYPTO', decimals: 2, unit: '$', binanceSymbol: 'BNBUSDT', basePrice: 654.8 },
+  { id: 'XRPUSDT', symbol: 'XRP/USDT (Ripple)', name: 'Ripple XRP', category: 'CRYPTO', decimals: 4, unit: '$', binanceSymbol: 'XRPUSDT', basePrice: 2.4500 },
 
   // 3. MATIÈRES PREMIÈRES & FOREX INSTITUTIONNEL (PRIORITÉ N°3)
-  { id: 'XAUUSD', symbol: 'XAU/USD', name: 'Or Spot (Gold)', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 2715.40 },
+  { id: 'XAUUSD', symbol: 'XAU/USD (Gold/Or)', name: 'Or Spot (Gold)', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 2715.40 },
   { id: 'EURUSD', symbol: 'EUR/USD', name: 'Euro / US Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 1.08450 },
   { id: 'GBPUSD', symbol: 'GBP/USD', name: 'British Pound / US Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 1.29820 },
   { id: 'USDJPY', symbol: 'USD/JPY', name: 'US Dollar / Japanese Yen', category: 'FOREX', decimals: 3, unit: '¥', basePrice: 153.420 },
@@ -51,8 +51,8 @@ export const PAIRS_CATALOG: Array<{
   { id: 'AUDUSD', symbol: 'AUD/USD', name: 'Australian Dollar / US Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 0.65830 },
   { id: 'USDCAD', symbol: 'USD/CAD', name: 'US Dollar / Canadian Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 1.38740 },
   { id: 'USDCHF', symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', category: 'FOREX', decimals: 5, unit: '', basePrice: 0.88410 },
-  { id: 'XAGUSD', symbol: 'XAG/USD', name: 'Argent Spot (Silver)', category: 'COMMODITIES', decimals: 3, unit: '$', basePrice: 32.180 },
-  { id: 'USOIL', symbol: 'USOIL', name: 'Pétrole Brut WTI', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 71.85 },
+  { id: 'XAGUSD', symbol: 'XAG/USD (Silver/Argent)', name: 'Argent Spot (Silver)', category: 'COMMODITIES', decimals: 3, unit: '$', basePrice: 32.180 },
+  { id: 'USOIL', symbol: 'USOIL (Pétrole WTI)', name: 'Pétrole Brut WTI', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 71.85 },
 ];
 
 const livePricesCache = new Map<string, PairInfo>();
@@ -84,7 +84,7 @@ async function fetchBinancePrices(): Promise<Record<string, { price: number; cha
 }
 
 // Fetch real Binance klines with fast timeout & instant synthetic fallback
-export async function fetchBinanceKlines(symbol: string, interval: '1d' | '4h' | '30m' | '15m' | '1h', limit = 60): Promise<Candle[]> {
+export async function fetchBinanceKlines(symbol: string, interval: '1d' | '4h' | '1h' | '30m' | '15m' | '5m', limit = 200): Promise<Candle[]> {
   try {
     const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`, {
       signal: AbortSignal.timeout(2500),
@@ -105,10 +105,12 @@ export async function fetchBinanceKlines(symbol: string, interval: '1d' | '4h' |
 }
 
 // Deterministic & realistic market series generator for Forex / Commodities / Deriv Synthetics / Offline fallback
-export function generateSyntheticCandles(pairId: string, timeframe: string, count = 60): Candle[] {
+export function generateSyntheticCandles(pairId: string, timeframe: string, count = 200): Candle[] {
   const pair = PAIRS_CATALOG.find((p) => p.id === pairId) || PAIRS_CATALOG[0];
   const now = Date.now();
   let intervalMs = 15 * 60 * 1000;
+  if (timeframe === '5m' || timeframe === '5M') intervalMs = 5 * 60 * 1000;
+  if (timeframe === '15m' || timeframe === '15M') intervalMs = 15 * 60 * 1000;
   if (timeframe === '30m' || timeframe === '30M') intervalMs = 30 * 60 * 1000;
   if (timeframe === '1h' || timeframe === '1H') intervalMs = 60 * 60 * 1000;
   if (timeframe === '4h' || timeframe === '4H') intervalMs = 4 * 60 * 60 * 1000;
@@ -122,15 +124,27 @@ export function generateSyntheticCandles(pairId: string, timeframe: string, coun
   if (pair.category === 'CRYPTO') vol = 0.012;
   if (pair.category === 'COMMODITIES') vol = 0.006;
   if (pair.category === 'SYNTHETICS') {
-    if (pair.id.includes('100')) vol = 0.025;
-    else if (pair.id.includes('75')) vol = 0.020;
-    else if (pair.id.includes('50')) vol = 0.015;
-    else vol = 0.008;
+    if (pair.id === 'V100') vol = 0.022;
+    else if (pair.id === 'V100_1S') vol = 0.028;
+    else if (pair.id === 'V75') vol = 0.018;
+    else if (pair.id === 'V75_1S') vol = 0.024;
+    else if (pair.id === 'V50') vol = 0.014;
+    else if (pair.id === 'V50_1S') vol = 0.019;
+    else if (pair.id === 'V25') vol = 0.010;
+    else if (pair.id === 'V25_1S') vol = 0.015;
+    else if (pair.id === 'V10') vol = 0.006;
+    else if (pair.id === 'V10_1S') vol = 0.010;
+    else vol = 0.012;
   }
 
-  // Seed with pair hash for reproducible yet organic SMC price structures
-  const hash = pairId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  let seed = hash * 9301 + 49297;
+  // Unique deterministic seed using full string characters and bit shifting
+  let hashVal = 0;
+  for (let c = 0; c < pair.id.length; c++) {
+    hashVal = ((hashVal << 5) - hashVal) + pair.id.charCodeAt(c);
+    hashVal |= 0;
+  }
+  const absHash = Math.abs(hashVal) + (pair.id.endsWith('_1S') ? 7777 : 1111);
+  let seed = (absHash * 9301 + 49297) % 233280;
   function random() {
     seed = (seed * 9301 + 49297) % 233280;
     return seed / 233280;
@@ -139,8 +153,8 @@ export function generateSyntheticCandles(pairId: string, timeframe: string, coun
   // Construct realistic market structure (Swings, Sweeps, Gaps)
   for (let i = count; i >= 0; i--) {
     const candleTime = now - i * intervalMs;
-    const wave = Math.sin((candleTime / (intervalMs * 14)) + hash) * 0.018;
-    const microTrend = Math.cos((candleTime / (intervalMs * 40))) * 0.035;
+    const wave = Math.sin((candleTime / (intervalMs * 14)) + (absHash % 100)) * 0.018;
+    const microTrend = Math.cos((candleTime / (intervalMs * 40)) + (absHash % 50)) * 0.035;
     const shock = (random() - 0.485) * vol;
     
     const delta = (wave * 0.2 + microTrend * 0.3 + shock) * currentPrice;

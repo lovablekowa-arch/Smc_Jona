@@ -83,11 +83,20 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const isBuy = signal.direction === 'BUY';
   const dirText = isBuy ? '🟢 <b>ACHAT (LONG)</b>' : '🔴 <b>VENTE (SHORT)</b>';
 
+  let statusBadge = '🚀 <b>NOUVEAU SETUP CONFIRMÉ</b>';
+  if (signal.isH4DirectorException) {
+    statusBadge = '🟡 <b>PROBABILITÉ MOYENNE — H4 DIRECTEUR</b>';
+  } else if (signal.setupProgressStatus === 'TRADE_EN_COURS') {
+    statusBadge = '🔄 <b>TRADE EN COURS (Objectif TP1 en vue)</b>';
+  } else if (signal.setupProgressStatus === 'RETEST_FVG') {
+    statusBadge = '🎯 <b>RETEST FVG PENDANT TRADE EN COURS</b>';
+  }
+
   const gradeHeader =
     signal.confluenceGrade === 'SNIPER'
       ? `🎯 <b>SIGNAL SNIPER (95% - 100%)</b> — ${signal.conditionsMetCount}/5 Confluences ⭐️`
       : signal.confluenceGrade === 'MEDIUM'
-      ? `⚡ <b>BON SETUP (75% - 90%)</b> — ${signal.conditionsMetCount}/5 Confluences`
+      ? `⚡ <b>BON SETUP (${signal.isH4DirectorException ? 'H4 Directeur' : '75% - 90%'})</b> — ${signal.conditionsMetCount}/5 Confluences`
       : `👁️ <b>À SURVEILLER (60% - 70%)</b> — ${signal.conditionsMetCount}/5 Confluences`;
 
   const categoryLabel =
@@ -105,28 +114,36 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const c4 = signal.confluences.condition4_LiquiditySweep;
   const c5 = signal.confluences.condition5_RSI10;
 
+  const d1Str = c1.daily ? `${c1.daily.bias === 'BULLISH' ? '🟢 BULLISH' : c1.daily.bias === 'BEARISH' ? '🔴 BEARISH' : '🟡 NEUTRAL'} (Structure : ${c1.daily.structure})` : 'N/A';
+  const h4Str = c1.fourHour ? `${c1.fourHour.bias === 'BULLISH' ? '🟢 BULLISH' : c1.fourHour.bias === 'BEARISH' ? '🔴 BEARISH' : '🟡 NEUTRAL'} (Structure : ${c1.fourHour.structure})` : 'N/A';
+  const m30Str = c1.thirtyMin ? `${c1.thirtyMin.bias === 'BULLISH' ? '🟢 BULLISH' : c1.thirtyMin.bias === 'BEARISH' ? '🔴 BEARISH' : '🟡 NEUTRAL'} (Structure : ${c1.thirtyMin.structure})` : 'N/A';
+
+  let globalAlignmentLabel = '🟢 BULLISH ALIGNED';
+  if (c1.alignmentStatus === 'BEARISH_ALIGNED') globalAlignmentLabel = '🔴 BEARISH ALIGNED';
+  else if (c1.alignmentStatus === 'BULLISH_D1_H4_M30_RETRACEMENT') globalAlignmentLabel = '🟢 D1/H4 BULLISH — 🔴 M30 RETRACEMENT (BUY)';
+  else if (c1.alignmentStatus === 'BEARISH_D1_H4_M30_RETRACEMENT') globalAlignmentLabel = '🔴 D1/H4 BEARISH — 🟢 M30 RETRACEMENT (SELL)';
+  else if (c1.alignmentStatus === 'H4_DIRECTOR_D1_COUNTER') globalAlignmentLabel = '🟡 PROBABILITÉ MOYENNE — H4 DIRECTEUR';
+  else if (c1.alignmentStatus === 'ACCUMULATION_RANGE_BLOCKED') globalAlignmentLabel = '🟡 ACCUMULATION / RANGE (Bloquant)';
+  else if (c1.alignmentStatus === 'CONFLICT_TRANSITION') globalAlignmentLabel = '⚪ CONFLIT / TRANSITION';
+
+  const fvgH1 = c2.fvgH1;
   const fvgM30 = c2.fvgM30;
   const fvgM15 = c2.fvgM15;
+
+  const fvgH1Text = fvgH1
+    ? `• <b>H1 :</b> <code>${fvgH1.low > 500 ? fvgH1.low.toFixed(1) : fvgH1.low.toFixed(4)} — ${fvgH1.high > 500 ? fvgH1.high.toFixed(1) : fvgH1.high.toFixed(4)}</code> (${fvgH1.sizePercent}%, Non mitigé)`
+    : '• <b>H1 :</b> <i>Aucun FVG récent</i>';
+
   const fvgM30Text = fvgM30
-    ? `• <b>FVG M30 (Structure) :</b> <code>${fvgM30.low > 500 ? fvgM30.low.toFixed(1) : fvgM30.low.toFixed(4)} — ${fvgM30.high > 500 ? fvgM30.high.toFixed(1) : fvgM30.high.toFixed(4)}</code> (${fvgM30.sizePercent}%, ${fvgM30.ageHours}h)`
-    : '';
+    ? `• <b>M30 :</b> <code>${fvgM30.low > 500 ? fvgM30.low.toFixed(1) : fvgM30.low.toFixed(4)} — ${fvgM30.high > 500 ? fvgM30.high.toFixed(1) : fvgM30.high.toFixed(4)}</code> (${fvgM30.sizePercent}%, Non mitigé)`
+    : '• <b>M30 :</b> <i>Aucun FVG récent</i>';
 
   const fvgM15Text = fvgM15
-    ? `• <b>FVG M15 (Zone d'Entrée &amp; POC) :</b> <code>${fvgM15.low > 500 ? fvgM15.low.toFixed(1) : fvgM15.low.toFixed(4)} — ${fvgM15.high > 500 ? fvgM15.high.toFixed(1) : fvgM15.high.toFixed(4)}</code> (POC: <code>${fvgM15.pocPrice || 'N/A'}</code>) ⭐`
+    ? `• <b>M15 (Entrée &amp; POC) :</b> <code>${fvgM15.low > 500 ? fvgM15.low.toFixed(1) : fvgM15.low.toFixed(4)} — ${fvgM15.high > 500 ? fvgM15.high.toFixed(1) : fvgM15.high.toFixed(4)}</code> (POC: <code>${fvgM15.pocPrice || 'N/A'}</code>)`
     : '';
 
-  const macroFvgText = c2.macroFvgInformativeSummary
-    ? `• <i>${escapeHtml(c2.macroFvgInformativeSummary)}</i>`
-    : '';
-
-  const ifvg = c2.inversionFVG;
-  const ifvgText = ifvg
-    ? `• <b>IFVG ${ifvg.timeframe} Inversé (${ifvg.role === 'INVERTED_SUPPORT' ? 'Support 🟢' : 'Résistance 🔴'}) :</b> ${ifvg.sizePercent}% (${ifvg.retested ? 'Retesté' : 'Actif'}) 🔄`
-    : '';
-
-  const fvgAncient = c2.ancientMitigatedFVG;
-  const fvgAncientText = fvgAncient
-    ? `• FVG ${fvgAncient.timeframe} Ancien (${fvgAncient.ageHours}h): DÉJÀ MITIGÉ (100% comblé) ⏳`
+  const internalLiqText = c3.internalLiquidityDescription
+    ? `\n   💧 <i>${escapeHtml(c3.internalLiquidityDescription)}</i>`
     : '';
 
   const retracementText = c3?.retracementConfirmation
@@ -138,8 +155,8 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
     : '';
 
   const sweepText = c4?.sweep ? c4.sweep.description : 'Balayage en formation';
-  const tp1Target = c4?.restingTargets?.[0] ? `${c4.restingTargets[0].label}` : 'TP1 Interne';
-  const tp2Target = c4?.restingTargets?.[1] ? `${c4.restingTargets[1].label}` : 'TP2 Majeur';
+  const tp1Target = 'Sommet/Creux Récent (0.0% Fibo)';
+  const tp2Target = 'Extension Liquidity Majeure';
 
   const pCurrent = signal.currentPrice > 500 ? signal.currentPrice.toFixed(2) : signal.currentPrice.toFixed(4);
   const pEntry = signal.entryPrice > 500 ? signal.entryPrice.toFixed(2) : signal.entryPrice.toFixed(4);
@@ -152,13 +169,14 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   if (signal.pathObstacleAnalysis) {
     if (signal.pathObstacleAnalysis.hasObstacle && signal.pathObstacleAnalysis.primaryObstacle) {
       const ob = signal.pathObstacleAnalysis.primaryObstacle;
-      roadmapText = `\n⚠️ <b>OBSTACLE DÉTECTÉ SUR LE CHEMIN :</b>\n🛑 <b>${escapeHtml(ob.label)}</b> à <code>${ob.priceLevel}</code> (${ob.volumeAmount ? `Vol: ${ob.volumeAmount}` : ''})\n👉 <i>Sécurisation ou TP partiel conseillé à ce niveau avant ${ob.blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2'}.</i>\n`;
+      roadmapText = `\n⚠️ <b>OBSTACLE SUR LE CHEMIN :</b>\n🛑 <b>${escapeHtml(ob.label)}</b> à <code>${ob.priceLevel}</code>\n👉 <i>Sécurisation ou TP partiel conseillé avant ${ob.blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2'}.</i>\n`;
     } else {
-      roadmapText = `\n🟢 <b>CHEMIN 100% OUVERT :</b>\n✨ <i>Voie libre vers TP1 &amp; TP2 (Aucun FVG opposé bloquant).</i>\n`;
+      roadmapText = `\n🟢 <b>CHEMIN 100% OUVERT :</b>\n✨ <i>Voie libre vers TP1 &amp; TP2 (Aucun obstacle bloquant).</i>\n`;
     }
   }
 
   return `${gradeHeader}
+${statusBadge}
 
 📊 <b>Paire:</b> <code>${escapeHtml(signal.pair)}</code> (${categoryLabel})
 🧭 <b>Direction:</b> ${dirText}
@@ -166,18 +184,24 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
 ━━━━━━━━━━━━━━━━━━━━
 🎯 <b>PLAN D'EXÉCUTION SMC :</b>
 🔹 <b>Entrée (Entry):</b> <code>${pEntry}</code>
-🛑 <b>Stop Loss (SL):</b> <code>${pSL}</code>
-🎯 <b>Cible 1 (TP1):</b> <code>${pTP1}</code> (<i>${escapeHtml(tp1Target)}</i>)
-🎯 <b>Cible 2 (TP2):</b> <code>${pTP2}</code> (<i>${escapeHtml(tp2Target)}</i>)
+🛑 <b>Stop Loss (SL Structurel):</b> <code>${pSL}</code>
+🎯 <b>Cible 1 (TP1 Sommet/Creux):</b> <code>${pTP1}</code> (<i>${escapeHtml(tp1Target)}</i>)
+🎯 <b>Cible 2 (TP2 Extension):</b> <code>${pTP2}</code> (<i>${escapeHtml(tp2Target)}</i>)
 ⚖️ <b>Ratio R:R:</b> <code>1 : ${escapeHtml(signal.riskRewardRatio)}</code>${roadmapText}━━━━━━━━━━━━━━━━━━━━
-🔍 <b>ANALYSE DES 5 CONFLUENCES :</b>
-1️⃣ <b>Tendance HTF (1D / 4H / 30M):</b> ${c1.satisfied ? '✅ VALIDÉ' : '⚠️ PARTIEL'}
-   <i>${escapeHtml(c1.summary)}</i>
-2️⃣ <b>Suite FVG M30 &amp; M15 (Alignement Obligatoire) :</b> ${c2.satisfied ? '✅ VALIDÉ' : '⚠️ EN ATTENTE'}
-${fvgM30Text ? `   ${fvgM30Text}\n` : ''}${fvgM15Text ? `   ${fvgM15Text}\n` : ''}${macroFvgText ? `   ${macroFvgText}\n` : ''}${ifvgText ? `   ${ifvgText}\n` : ''}${fvgAncientText ? `   ${fvgAncientText}` : ''}
-3️⃣ <b>Fibonacci &amp; Bougie Confirmation:</b> ${c3.satisfied ? '✅ VALIDÉ' : '⚠️ NEUTRE'}
-   <i>${escapeHtml(c3.summary)}</i>${retracementText}
-4️⃣ <b>Balayage Liquidité Sweep 💧:</b> ${c4.satisfied ? '✅ VALIDÉ' : '⚠️ FORMATION'}
+🧭 <b>TREND ALIGNMENT (Structure Pure Prix) :</b>
+• <b>D1 :</b> ${d1Str}
+• <b>H4 :</b> ${h4Str}
+• <b>M30 :</b> ${m30Str}
+• <b>GLOBAL :</b> <b>${escapeHtml(globalAlignmentLabel)}</b>
+${c1.m15M5RetracementInfo ? `• <i>${escapeHtml(c1.m15M5RetracementInfo)}</i>\n` : ''}
+📍 <b>FVG STATUS (H1 &amp; M30) :</b>
+${fvgH1Text}
+${fvgM30Text}
+${fvgM15Text ? `${fvgM15Text}\n` : ''}
+━━━━━━━━━━━━━━━━━━━━
+🔍 <b>CONFIRMATIONS SÉQUENTIELLES :</b>
+3️⃣ <b>Condition 3 (Fibo ${isBuy ? 'Discount' : 'Premium'} &amp; Retracement):</b> ${c3.satisfied ? '✅ VALIDÉ' : '⛔ NON VALIDE'}${internalLiqText}${retracementText}
+4️⃣ <b>Condition 4 (Liquidité Sweep):</b> ${c4.satisfied ? '✅ VALIDÉ' : '⚠️ FORMATION'}
    <i>${escapeHtml(sweepText)}</i>${rsiText}
 ━━━━━━━━━━━━━━━━━━━━
 ⏰ <b>Déclenché à:</b> ${escapeHtml(signal.formattedTime)} (Scan 24/7 SMC Engine)`;

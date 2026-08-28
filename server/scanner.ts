@@ -263,6 +263,11 @@ export async function executeScan(
       break;
     }
 
+    // Noise filtering: Exclude setups where TP1 is already reached or invalidated by deep breach
+    if (signal.setupProgressStatus === 'TP1_ATTEINT_EXCLU' || signal.setupProgressStatus === 'INVALIDÉ_COMBLEMENT') {
+      continue;
+    }
+
     const isGradeAllowed = currentSettings.alertLevels.includes(signal.confluenceGrade);
     const isCategoryAllowed = currentSettings.activeCategories.includes(signal.category);
     const isMuted = currentSettings.mutedPairs[signal.pair] && now < currentSettings.mutedPairs[signal.pair];
@@ -281,9 +286,12 @@ export async function executeScan(
       }
     }
 
-    // Check anti-duplicate cooldown
-    const lastSent = lastAlertSentTime[signal.pair] || 0;
-    const cooldownMs = Math.max(1, currentSettings.antiDuplicateHours || 2) * 60 * 60 * 1000;
+    // Check intelligent anti-duplicate cooldown per pair, direction and setup phase
+    const stateKey = `${signal.pair}_${signal.direction}_${signal.setupProgressStatus || 'ACTIVE'}`;
+    const lastSent = lastAlertSentTime[stateKey] || lastAlertSentTime[signal.pair] || 0;
+    // Dynamic cooldown: 15 minutes default for cron intervals, or custom antiDuplicateHours
+    const antiDupMinutes = Math.min(15, (currentSettings.antiDuplicateHours || 0.25) * 60);
+    const cooldownMs = antiDupMinutes * 60 * 1000;
     const isCooldownActive = now - lastSent < cooldownMs && !isManual;
 
     // 3.1 Send standard SMC signal alert
@@ -298,6 +306,7 @@ export async function executeScan(
         telegramError = res.error;
 
         if (telegramSent) {
+          lastAlertSentTime[stateKey] = now;
           lastAlertSentTime[signal.pair] = now;
           alertsDispatched++;
           // Pacing delay (1.5s) between consecutive Telegram alerts to avoid hitting 429
@@ -330,7 +339,7 @@ export async function executeScan(
         telegramError,
         status: telegramSent ? 'DELIVERED' : hasTelegram ? 'FAILED' : 'LOCAL_ONLY',
         alertType: 'SIGNAL_CREATED',
-        detailsSummary: `${signal.conditionsMetCount}/5 Confluences | Entrée ${
+        detailsSummary: `${signal.conditionsMetCount}/5 Confluences [${signal.setupProgressStatus || 'ACTIF'}] | Entrée ${
           signal.entryPrice > 500 ? signal.entryPrice.toFixed(2) : signal.entryPrice.toFixed(4)
         } | TP1 ${signal.tp1 > 500 ? signal.tp1.toFixed(2) : signal.tp1.toFixed(4)}`,
       });
@@ -345,8 +354,9 @@ export async function executeScan(
         break;
       }
 
-      const lastTapSent = lastFVGTapSentTime[signal.pair] || 0;
-      const tapCooldownMs = 60 * 60 * 1000; // 1h cooldown
+      const tapKey = `tap_${signal.pair}_${signal.direction}`;
+      const lastTapSent = lastFVGTapSentTime[tapKey] || lastFVGTapSentTime[signal.pair] || 0;
+      const tapCooldownMs = 15 * 60 * 1000; // 15 min cooldown for retracement alerts
       const isTapCooldownActive = now - lastTapSent < tapCooldownMs && !isManual;
 
       if (!isTapCooldownActive) {

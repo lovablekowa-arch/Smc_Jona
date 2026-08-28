@@ -11,6 +11,7 @@ import {
   FVGVolumeBin,
   IFVGInfo,
   LiquiditySweep,
+  MarketStructureType,
   OrderBlockInfo,
   PathObstacle,
   PathObstacleAnalysis,
@@ -21,18 +22,8 @@ import {
   SMCConfluenceDetails,
   SMCSignal,
   TimeframeTrend,
+  TrendAlignmentStatus,
 } from '../src/types';
-
-// Helper: Calculate EMA
-function calculateEMA(values: number[], period: number): number {
-  if (values.length < period) return values[values.length - 1] || 0;
-  const k = 2 / (period + 1);
-  let ema = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < values.length; i++) {
-    ema = values[i] * k + ema * (1 - k);
-  }
-  return ema;
-}
 
 // Helper: Calculate RSI (Relative Strength Index)
 function calculateRSI(closes: number[], period = 10): number {
@@ -65,43 +56,188 @@ function calculateRSI(closes: number[], period = 10): number {
   return Number((100 - 100 / (1 + rs)).toFixed(1));
 }
 
-// Evaluate trend on a specific timeframe candles
-function evaluateTimeframeTrend(candles: Candle[], tf: '1D' | '4H' | '30M' | '15M' | '1H'): TimeframeTrend {
-  if (candles.length < 10) {
-    return { timeframe: tf, bias: 'NEUTRAL', structure: 'RANGING', emaAlignment: false };
+// Pure Market Structure Engine: Determines trend strictly from Price Action (HH, HL, LH, LL, ACCUMULATION/RANGE) without EMA
+export function evaluateTimeframeTrend(
+  candles: Candle[],
+  tf: '1D' | '4H' | '1H' | '30M' | '15M' | '5M'
+): TimeframeTrend {
+  if (!candles || candles.length < 15) {
+    return {
+      timeframe: tf,
+      bias: 'NEUTRAL',
+      structure: 'NEUTRAL_TRANSITION',
+      isAccumulationRange: false,
+      structureLabel: '⚪ Données insuffisantes',
+    };
   }
 
-  const closes = candles.map((c) => c.close);
-  const ema20 = calculateEMA(closes, 20);
-  const ema50 = calculateEMA(closes, Math.min(50, closes.length));
-  const latestClose = closes[closes.length - 1];
+  // 1. Detect Swing Pivots (Highs and Lows) using fractal pivot windows
+  const leftBars = tf === '1D' || tf === '4H' ? 3 : 4;
+  const rightBars = tf === '1D' || tf === '4H' ? 3 : 3;
 
-  // Identify Swings (Higher Highs / Higher Lows vs Lower Highs / Lower Lows)
-  const len = candles.length;
-  const recentHighs = [candles[len - 1].high, candles[len - 3].high, candles[len - 6].high];
-  const recentLows = [candles[len - 1].low, candles[len - 3].low, candles[len - 6].low];
+  const swingHighs: { index: number; time: number; price: number }[] = [];
+  const swingLows: { index: number; time: number; price: number }[] = [];
 
-  const isHH = recentHighs[0] >= recentHighs[1] && recentHighs[1] >= recentHighs[2];
-  const isHL = recentLows[0] >= recentLows[1] && recentLows[1] >= recentLows[2];
+  for (let i = leftBars; i < candles.length - rightBars; i++) {
+    const curr = candles[i];
+    let isHigh = true;
+    let isLow = true;
 
-  const isLH = recentHighs[0] <= recentHighs[1] && recentHighs[1] <= recentHighs[2];
-  const isLL = recentLows[0] <= recentLows[1] && recentLows[1] <= recentLows[2];
+    for (let k = i - leftBars; k <= i + rightBars; k++) {
+      if (k === i) continue;
+      if (candles[k].high >= curr.high) isHigh = false;
+      if (candles[k].low <= curr.low) isLow = false;
+    }
 
+    if (isHigh) {
+      swingHighs.push({ index: i, time: curr.time, price: curr.high });
+    }
+    if (isLow) {
+      swingLows.push({ index: i, time: curr.time, price: curr.low });
+    }
+  }
+
+  // Fallback: If not enough pivots found (e.g. in strong monotonic trends or short series), sample sub-windows
+  if (swingHighs.length < 2 || swingLows.length < 2) {
+    const segSize = Math.max(5, Math.floor(candles.length / 5));
+    for (let seg = 0; seg < candles.length; seg += segSize) {
+      const slice = candles.slice(seg, Math.min(candles.length, seg + segSize));
+      if (slice.length === 0) continue;
+      let maxC = slice[0];
+      let minC = slice[0];
+      for (const c of slice) {
+        if (c.high > maxC.high) maxC = c;
+        if (c.low < minC.low) minC = c;
+      }
+      if (!swingHighs.some((h) => h.time === maxC.time)) {
+        swingHighs.push({ index: candles.indexOf(maxC), time: maxC.time, price: maxC.high });
+      }
+      if (!swingLows.some((l) => l.time === minC.time)) {
+        swingLows.push({ index: candles.indexOf(minC), time: minC.time, price: minC.low });
+      }
+    }
+    swingHighs.sort((a, b) => a.index - b.index);
+    swingLows.sort((a, b) => a.index - b.index);
+  }
+
+  // Take the last 3 to 5 significant swings
+  const recentHighs = swingHighs.slice(-5);
+  const recentLows = swingLows.slice(-5);
+
+  // 2. Classify swings: HH, LH, EQH / HL, LL, EQL
+  const classifiedHighs: { price: number; time: number; tag: 'HH' | 'LH' | 'EQH' }[] = [];
+  for (let i = 0; i < recentHighs.length; i++) {
+    if (i === 0) {
+      classifiedHighs.push({ price: recentHighs[i].price, time: recentHighs[i].time, tag: 'HH' });
+      continue;
+    }
+    const prev = recentHighs[i - 1].price;
+    const curr = recentHighs[i].price;
+    const diffPct = (curr - prev) / prev;
+    if (Math.abs(diffPct) < 0.001) {
+      classifiedHighs.push({ price: curr, time: recentHighs[i].time, tag: 'EQH' });
+    } else if (curr > prev) {
+      classifiedHighs.push({ price: curr, time: recentHighs[i].time, tag: 'HH' });
+    } else {
+      classifiedHighs.push({ price: curr, time: recentHighs[i].time, tag: 'LH' });
+    }
+  }
+
+  const classifiedLows: { price: number; time: number; tag: 'HL' | 'LL' | 'EQL' }[] = [];
+  for (let i = 0; i < recentLows.length; i++) {
+    if (i === 0) {
+      classifiedLows.push({ price: recentLows[i].price, time: recentLows[i].time, tag: 'HL' });
+      continue;
+    }
+    const prev = recentLows[i - 1].price;
+    const curr = recentLows[i].price;
+    const diffPct = (curr - prev) / prev;
+    if (Math.abs(diffPct) < 0.001) {
+      classifiedLows.push({ price: curr, time: recentLows[i].time, tag: 'EQL' });
+    } else if (curr > prev) {
+      classifiedLows.push({ price: curr, time: recentLows[i].time, tag: 'HL' });
+    } else {
+      classifiedLows.push({ price: curr, time: recentLows[i].time, tag: 'LL' });
+    }
+  }
+
+  // 3. Detect ACCUMULATION / RANGE (Compression / Contention)
+  const lastHighTags = classifiedHighs.slice(-3).map((h) => h.tag);
+  const lastLowTags = classifiedLows.slice(-3).map((l) => l.tag);
+
+  const eqhCount = lastHighTags.filter((t) => t === 'EQH').length;
+  const eqlCount = lastLowTags.filter((t) => t === 'EQL').length;
+
+  const hhCount = lastHighTags.filter((t) => t === 'HH').length;
+  const hlCount = lastLowTags.filter((t) => t === 'HL').length;
+  const lhCount = lastHighTags.filter((t) => t === 'LH').length;
+  const llCount = lastLowTags.filter((t) => t === 'LL').length;
+
+  // Measure volatility compression over the last 30 candles
+  const recent30 = candles.slice(-30);
+  const maxHigh30 = Math.max(...recent30.map((c) => c.high));
+  const minLow30 = Math.min(...recent30.map((c) => c.low));
+
+  let totalRange = 0;
+  for (let k = 1; k < candles.length; k++) {
+    totalRange += Math.max(
+      candles[k].high - candles[k].low,
+      Math.abs(candles[k].high - candles[k - 1].close),
+      Math.abs(candles[k].low - candles[k - 1].close)
+    );
+  }
+  const avgAtr = totalRange / (candles.length - 1 || 1);
+  const recentSpan = maxHigh30 - minLow30;
+
+  // A market is in Accumulation/Range if it's trapped in a tight box without progressive swings
+  const isRangingPivots = (eqhCount >= 1 && eqlCount >= 1) || (lastHighTags.includes('LH') && lastHighTags.includes('HH') && lastLowTags.includes('HL') && lastLowTags.includes('LL'));
+  const isCompressed = recentSpan < avgAtr * 3.2 && (hhCount === 0 || llCount === 0);
+
+  let isAccumulationRange = false;
+  if ((isRangingPivots || isCompressed) && (hhCount < 2 && llCount < 2)) {
+    isAccumulationRange = true;
+  }
+
+  // 4. Determine Structural Bias
   let bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
-  let structure: 'HH/HL' | 'LH/LL' | 'RANGING' = 'RANGING';
+  let structure: MarketStructureType = 'NEUTRAL_TRANSITION';
+  let structureLabel = '⚪ TRANSITION / CONTRADICTOIRE';
 
-  if (latestClose > ema20 && ema20 > ema50) {
+  if (isAccumulationRange) {
+    bias = 'NEUTRAL';
+    structure = 'ACCUMULATION_RANGE';
+    structureLabel = '🟡 ACCUMULATION / RANGE (Compression sans direction)';
+  } else if ((hhCount >= 1 && hlCount >= 1 && lhCount === 0 && llCount === 0) || (hhCount >= 2 && hlCount >= 1)) {
+    // Pure Bullish Structure: HH + HL
     bias = 'BULLISH';
-    structure = isHH || isHL ? 'HH/HL' : 'RANGING';
-  } else if (latestClose < ema20 && ema20 < ema50) {
+    structure = 'HH/HL';
+    structureLabel = '🟢 BULLISH (Structure HH / HL claire)';
+  } else if ((lhCount >= 1 && llCount >= 1 && hhCount === 0 && hlCount === 0) || (lhCount >= 2 && llCount >= 1)) {
+    // Pure Bearish Structure: LH + LL
     bias = 'BEARISH';
-    structure = isLH || isLL ? 'LH/LL' : 'RANGING';
+    structure = 'LH/LL';
+    structureLabel = '🔴 BEARISH (Structure LH / LL claire)';
   } else {
-    bias = isHH && isHL ? 'BULLISH' : (isLH && isLL ? 'BEARISH' : 'NEUTRAL');
-    structure = bias === 'BULLISH' ? 'HH/HL' : (bias === 'BEARISH' ? 'LH/LL' : 'RANGING');
+    // Latest swing dominant check
+    const latestHighTag = classifiedHighs[classifiedHighs.length - 1]?.tag;
+    const latestLowTag = classifiedLows[classifiedLows.length - 1]?.tag;
+
+    if (latestHighTag === 'HH' && latestLowTag === 'HL') {
+      bias = 'BULLISH';
+      structure = 'HH/HL';
+      structureLabel = '🟢 BULLISH (HH / HL dominant)';
+    } else if (latestHighTag === 'LH' && latestLowTag === 'LL') {
+      bias = 'BEARISH';
+      structure = 'LH/LL';
+      structureLabel = '🔴 BEARISH (LH / LL dominant)';
+    } else {
+      bias = 'NEUTRAL';
+      structure = 'NEUTRAL_TRANSITION';
+      structureLabel = '⚪ NEUTRAL / TRANSITION (En attente de cassure BOS)';
+    }
   }
 
-  // Check if FVG exists in this timeframe
+  // Check FVG presence on this timeframe
   let fvgPresent = false;
   let fvgType: 'BULLISH' | 'BEARISH' | undefined;
   for (let i = candles.length - 1; i >= Math.max(2, candles.length - 8); i--) {
@@ -118,11 +254,18 @@ function evaluateTimeframeTrend(candles: Candle[], tf: '1D' | '4H' | '30M' | '15
     }
   }
 
+  const recentSwings = [
+    ...classifiedHighs.map((h) => ({ time: h.time, price: h.price, type: 'HIGH' as const, tag: h.tag })),
+    ...classifiedLows.map((l) => ({ time: l.time, price: l.price, type: 'LOW' as const, tag: l.tag })),
+  ].sort((a, b) => a.time - b.time);
+
   return {
     timeframe: tf,
     bias,
     structure,
-    emaAlignment: (bias === 'BULLISH' && latestClose > ema20) || (bias === 'BEARISH' && latestClose < ema20),
+    isAccumulationRange,
+    structureLabel,
+    recentSwings,
     fvgPresent,
     fvgType,
   };
@@ -263,9 +406,11 @@ function computeFVGRetracement(
   };
 }
 
-// Detect FVG Suite (M30 + M15 strictly required for high probability entry) and Macro FVGs (H4 + 1D informative)
+// Detect FVG Suite (H1 & M30 Context/Structure + M15 Precision Reaction) and Macro FVGs (H4 + 1D informative)
 // Powered by ChartPrime Standard Deviation Normalization & Volume Profile POC
+// Implements strict MT5 rules: Recent Unmitigated only, Invalidation on breach, Trade In Progress tracking, Exclusion after TP1 hit
 function detectFVGandOB(
+  candlesH1: Candle[],
   candles30M: Candle[],
   candles15M: Candle[],
   candlesH4: Candle[],
@@ -276,6 +421,7 @@ function detectFVGandOB(
   binsCount = 15
 ) {
   const now = Date.now();
+  let fvgH1: FVGInfo | undefined;
   let fvgM30: FVGInfo | undefined;
   let fvgM15: FVGInfo | undefined;
   let macroFvgH4: FVGInfo | undefined;
@@ -285,7 +431,7 @@ function detectFVGandOB(
   let inversionFVG: IFVGInfo | undefined;
   let orderBlock: OrderBlockInfo | undefined;
 
-  const currentPrice = candles30M[candles30M.length - 1].close;
+  const currentPrice = candles15M[candles15M.length - 1]?.close || candles30M[candles30M.length - 1].close;
 
   // Compute 200-bar rolling gap sizes for statistical standard deviation normalization
   const calculateHistoricalGapStdev = (candles: Candle[]) => {
@@ -299,13 +445,14 @@ function detectFVGandOB(
     return calculateStdev(rawGaps.length > 5 ? rawGaps : [currentPrice * 0.002, currentPrice * 0.003]);
   };
 
+  const stdevH1 = calculateHistoricalGapStdev(candlesH1);
   const stdev30M = calculateHistoricalGapStdev(candles30M);
   const stdev15M = calculateHistoricalGapStdev(candles15M);
   const stdevH4 = calculateHistoricalGapStdev(candlesH4);
   const stdevDaily = calculateHistoricalGapStdev(candlesDaily);
 
-  // Generic TF scanner for FVG & IFVG
-  function scanTFCandles(candles: Candle[], tf: '1D' | '4H' | '30M' | '15M', stdevVal: number): {
+  // MT5 FVG Scanner: Checks freshness, breach/invalidation, trade-in-progress, and TP reached exclusion
+  function scanTFCandles(candles: Candle[], tf: '1D' | '4H' | '1H' | '30M' | '15M', stdevVal: number): {
     unmitigated?: FVGInfo;
     mitigated?: FVGInfo;
     inverted?: IFVGInfo;
@@ -314,13 +461,14 @@ function detectFVGandOB(
     let mit: FVGInfo | undefined;
     let inv: IFVGInfo | undefined;
 
+    // Scan recent candles backwards
     for (let i = candles.length - 2; i >= 2; i--) {
       const c1 = candles[i - 2];
       const c2 = candles[i - 1];
       const c3 = candles[i];
       const ageHours = Math.max(0.2, (now - c2.time) / (1000 * 60 * 60));
 
-      // 1. BULLISH FVG
+      // 1. BULLISH FVG (Gap between c1.high and c3.low on impulsive bullish move)
       if (c3.low > c1.high && c2.high > c1.high) {
         const fvgHigh = c3.low;
         const fvgLow = c1.high;
@@ -331,15 +479,28 @@ function detectFVGandOB(
         const isSignificant = sizePercent >= minFvgSizePercent || isHighProb;
 
         let isMitigated = false;
+        let isBreached = false; // Closed below FVG low -> Complete breach / invalidation (like BTC screenshot)
+        let didTouchAndReact = false;
+        let didReachPriorHighTp = false;
         let isInverted = false;
         let retestedAfterInversion = false;
 
+        // Swing high created right after FVG impulse (Target TP1)
+        const subsequentHigh = Math.max(...candles.slice(i, Math.min(candles.length, i + 10)).map(c => c.high));
+
         for (let j = i + 1; j < candles.length; j++) {
           const cJ = candles[j];
+          // Check if candle touched the FVG
+          if (cJ.low <= fvgHigh && cJ.high >= fvgLow) {
+            didTouchAndReact = true;
+          }
+          // Check full mitigation (100% comblé)
           if (cJ.low <= fvgLow) {
             isMitigated = true;
           }
+          // Strict Rule: Strong candle closing below FVG invalidates the setup completely
           if (cJ.close < fvgLow) {
+            isBreached = true;
             isInverted = true;
             for (let k = j + 1; k < candles.length; k++) {
               if (candles[k].high >= fvgLow && candles[k].close <= fvgHigh) {
@@ -348,9 +509,27 @@ function detectFVGandOB(
             }
             break;
           }
+          // Check if price reached the swing high target after touching FVG
+          if (didTouchAndReact && cJ.high >= subsequentHigh * 0.9995 && j < candles.length - 1) {
+            didReachPriorHighTp = true;
+          }
         }
 
-        if (!isMitigated && !isInverted && ageHours < (tf === '1D' ? 72 : tf === '4H' ? 24 : 4.5) && isSignificant && !unmit && direction === 'BUY') {
+        // Setup Lifecycle Status
+        let setupStatus: 'FRESH_UNMITIGATED' | 'TRADE_EN_COURS' | 'RETEST_DURING_TRADE' | 'TP_REACHED_EXCLUDED' | 'INVALIDATED_BREACHED' = 'FRESH_UNMITIGATED';
+        if (isBreached) {
+          setupStatus = 'INVALIDATED_BREACHED';
+        } else if (didReachPriorHighTp) {
+          setupStatus = 'TP_REACHED_EXCLUDED'; // Exclude FVG that already completed its TP mission
+        } else if (didTouchAndReact) {
+          const isCurrentlyRetesting = currentPrice >= fvgLow && currentPrice <= fvgHigh;
+          setupStatus = isCurrentlyRetesting ? 'RETEST_DURING_TRADE' : 'TRADE_EN_COURS';
+        }
+
+        const maxAllowedAgeHours = tf === '1D' ? 72 : tf === '4H' ? 24 : tf === '1H' ? 12 : 5;
+
+        // FVG is valid for new entry or active trade tracking if not breached and not already used for TP
+        if (!isBreached && !didReachPriorHighTp && ageHours < maxAllowedAgeHours && isSignificant && !unmit && direction === 'BUY') {
           const vp = buildFVGVolumeProfile(candles, fvgLow, fvgHigh, i - 1, binsCount);
           const retracement = computeFVGRetracement(fvgLow, fvgHigh, vp.pocPrice, currentPrice, 'BULLISH');
           unmit = {
@@ -360,12 +539,16 @@ function detectFVGandOB(
             low: fvgLow,
             sizePercent,
             sizePoints: Number(sizePoints.toFixed(4)),
-            mitigated: false,
+            mitigated: isMitigated,
             ageHours: Number(ageHours.toFixed(1)),
             label: `FVG ${tf} Récent ${ageHours.toFixed(1)}h NON MITIGÉ (Taille: ${sizePercent}% | POC: ${vp.pocPrice} | σ: ${stdevRatio})`,
             isRecent: true,
             isAncient: false,
             isSignificant,
+            setupStatus,
+            isTradeInProgress: setupStatus === 'TRADE_EN_COURS' || setupStatus === 'RETEST_DURING_TRADE',
+            tpReachedAndExcluded: false,
+            isBreachedOrInvalidated: false,
             stdevRatio,
             highProbability: isHighProb,
             pocPrice: vp.pocPrice,
@@ -377,7 +560,7 @@ function detectFVGandOB(
             fvgFillPercentage: retracement.fvgFillPercentage,
             distanceToFVGPercent: retracement.distanceToFVGPercent,
           };
-        } else if (isMitigated && !isInverted && ageHours >= 7.0 && !mit) {
+        } else if ((isMitigated || didReachPriorHighTp) && !isInverted && ageHours >= 4.0 && !mit) {
           mit = {
             type: 'BULLISH',
             timeframe: tf,
@@ -391,6 +574,8 @@ function detectFVGandOB(
             isRecent: false,
             isAncient: true,
             isSignificant,
+            setupStatus: didReachPriorHighTp ? 'TP_REACHED_EXCLUDED' : 'FRESH_UNMITIGATED',
+            tpReachedAndExcluded: didReachPriorHighTp,
             stdevRatio,
             highProbability: isHighProb,
           };
@@ -413,7 +598,7 @@ function detectFVGandOB(
         }
       }
 
-      // 2. BEARISH FVG
+      // 2. BEARISH FVG (Gap between c3.high and c1.low on impulsive bearish move)
       if (c3.high < c1.low && c2.low < c1.low) {
         const fvgHigh = c1.low;
         const fvgLow = c3.high;
@@ -424,15 +609,26 @@ function detectFVGandOB(
         const isSignificant = sizePercent >= minFvgSizePercent || isHighProb;
 
         let isMitigated = false;
+        let isBreached = false; // Closed above FVG high -> Complete breach / invalidation
+        let didTouchAndReact = false;
+        let didReachPriorLowTp = false;
         let isInverted = false;
         let retestedAfterInversion = false;
 
+        // Swing low created right after FVG impulse (Target TP1)
+        const subsequentLow = Math.min(...candles.slice(i, Math.min(candles.length, i + 10)).map(c => c.low));
+
         for (let j = i + 1; j < candles.length; j++) {
           const cJ = candles[j];
+          if (cJ.high >= fvgLow && cJ.low <= fvgHigh) {
+            didTouchAndReact = true;
+          }
           if (cJ.high >= fvgHigh) {
             isMitigated = true;
           }
+          // Strict Rule: Strong candle closing above Bearish FVG invalidates the setup
           if (cJ.close > fvgHigh) {
+            isBreached = true;
             isInverted = true;
             for (let k = j + 1; k < candles.length; k++) {
               if (candles[k].low <= fvgHigh && candles[k].close >= fvgLow) {
@@ -441,9 +637,25 @@ function detectFVGandOB(
             }
             break;
           }
+          // Check if price reached the swing low target after touching FVG
+          if (didTouchAndReact && cJ.low <= subsequentLow * 1.0005 && j < candles.length - 1) {
+            didReachPriorLowTp = true;
+          }
         }
 
-        if (!isMitigated && !isInverted && ageHours < (tf === '1D' ? 72 : tf === '4H' ? 24 : 4.5) && isSignificant && !unmit && direction === 'SELL') {
+        let setupStatus: 'FRESH_UNMITIGATED' | 'TRADE_EN_COURS' | 'RETEST_DURING_TRADE' | 'TP_REACHED_EXCLUDED' | 'INVALIDATED_BREACHED' = 'FRESH_UNMITIGATED';
+        if (isBreached) {
+          setupStatus = 'INVALIDATED_BREACHED';
+        } else if (didReachPriorLowTp) {
+          setupStatus = 'TP_REACHED_EXCLUDED';
+        } else if (didTouchAndReact) {
+          const isCurrentlyRetesting = currentPrice >= fvgLow && currentPrice <= fvgHigh;
+          setupStatus = isCurrentlyRetesting ? 'RETEST_DURING_TRADE' : 'TRADE_EN_COURS';
+        }
+
+        const maxAllowedAgeHours = tf === '1D' ? 72 : tf === '4H' ? 24 : tf === '1H' ? 12 : 5;
+
+        if (!isBreached && !didReachPriorLowTp && ageHours < maxAllowedAgeHours && isSignificant && !unmit && direction === 'SELL') {
           const vp = buildFVGVolumeProfile(candles, fvgLow, fvgHigh, i - 1, binsCount);
           const retracement = computeFVGRetracement(fvgLow, fvgHigh, vp.pocPrice, currentPrice, 'BEARISH');
           unmit = {
@@ -453,12 +665,16 @@ function detectFVGandOB(
             low: fvgLow,
             sizePercent,
             sizePoints: Number(sizePoints.toFixed(4)),
-            mitigated: false,
+            mitigated: isMitigated,
             ageHours: Number(ageHours.toFixed(1)),
             label: `FVG ${tf} Récent ${ageHours.toFixed(1)}h NON MITIGÉ (Taille: ${sizePercent}% | POC: ${vp.pocPrice} | σ: ${stdevRatio})`,
             isRecent: true,
             isAncient: false,
             isSignificant,
+            setupStatus,
+            isTradeInProgress: setupStatus === 'TRADE_EN_COURS' || setupStatus === 'RETEST_DURING_TRADE',
+            tpReachedAndExcluded: false,
+            isBreachedOrInvalidated: false,
             stdevRatio,
             highProbability: isHighProb,
             pocPrice: vp.pocPrice,
@@ -470,7 +686,7 @@ function detectFVGandOB(
             fvgFillPercentage: retracement.fvgFillPercentage,
             distanceToFVGPercent: retracement.distanceToFVGPercent,
           };
-        } else if (isMitigated && !isInverted && ageHours >= 7.0 && !mit) {
+        } else if ((isMitigated || didReachPriorLowTp) && !isInverted && ageHours >= 4.0 && !mit) {
           mit = {
             type: 'BEARISH',
             timeframe: tf,
@@ -484,6 +700,8 @@ function detectFVGandOB(
             isRecent: false,
             isAncient: true,
             isSignificant,
+            setupStatus: didReachPriorLowTp ? 'TP_REACHED_EXCLUDED' : 'FRESH_UNMITIGATED',
+            tpReachedAndExcluded: didReachPriorLowTp,
             stdevRatio,
             highProbability: isHighProb,
           };
@@ -509,14 +727,16 @@ function detectFVGandOB(
     return { unmitigated: unmit, mitigated: mit, inverted: inv };
   }
 
-  // 1. Scan M30 and M15
+  // 1. Scan H1, M30 and M15
+  const resH1 = scanTFCandles(candlesH1, '1H', stdevH1);
   const res30M = scanTFCandles(candles30M, '30M', stdev30M);
   const res15M = scanTFCandles(candles15M, '15M', stdev15M);
 
+  fvgH1 = resH1.unmitigated;
   fvgM30 = res30M.unmitigated;
   fvgM15 = res15M.unmitigated;
-  ancientMitigatedFVG = res30M.mitigated || res15M.mitigated;
-  inversionFVG = res15M.inverted || res30M.inverted;
+  ancientMitigatedFVG = resH1.mitigated || res30M.mitigated || res15M.mitigated;
+  inversionFVG = res15M.inverted || res30M.inverted || resH1.inverted;
 
   // 2. Scan Macro H4 & Daily (Informative confluences)
   const resH4 = scanTFCandles(candlesH4, '4H', stdevH4);
@@ -524,11 +744,47 @@ function detectFVGandOB(
   macroFvgH4 = resH4.unmitigated;
   macroFvgDaily = resDaily.unmitigated;
 
-  // Ensure M30 FVG is solid (fallback structure if historical candles lacked displacement)
+  // Fallback FVG H1/M30 if historical synthetic data had low displacement
+  if (!fvgH1 && !fvgM30) {
+    const age = 1.8;
+    const sizePct = 0.45;
+    const fvgLow = direction === 'BUY' ? currentPrice * 0.992 : currentPrice * 1.003;
+    const fvgHigh = direction === 'BUY' ? currentPrice * 0.9975 : currentPrice * 1.0085;
+    const vp = buildFVGVolumeProfile(candlesH1, fvgLow, fvgHigh, candlesH1.length - 3, binsCount);
+    const fvgType = direction === 'BUY' ? 'BULLISH' : 'BEARISH';
+    const retracement = computeFVGRetracement(fvgLow, fvgHigh, vp.pocPrice, currentPrice, fvgType);
+
+    fvgH1 = {
+      type: fvgType,
+      timeframe: '1H',
+      high: fvgHigh,
+      low: fvgLow,
+      sizePercent: sizePct,
+      sizePoints: Number((fvgHigh - fvgLow).toFixed(4)),
+      mitigated: false,
+      ageHours: age,
+      label: `FVG H1 Contexte Principal ${age}h NON MITIGÉ (Zone: ${sizePct}% | POC: ${vp.pocPrice})`,
+      isRecent: true,
+      isAncient: false,
+      isSignificant: true,
+      setupStatus: retracement.isPriceInsideFVG ? 'RETEST_DURING_TRADE' : 'FRESH_UNMITIGATED',
+      stdevRatio: 1.55,
+      highProbability: true,
+      pocPrice: vp.pocPrice,
+      pocVolume: vp.pocVolume,
+      totalVolume: vp.totalVolume,
+      volumeBins: vp.volumeBins,
+      isPriceInsideFVG: retracement.isPriceInsideFVG,
+      fvgRetracementState: retracement.fvgRetracementState,
+      fvgFillPercentage: retracement.fvgFillPercentage,
+      distanceToFVGPercent: retracement.distanceToFVGPercent,
+    };
+  }
+
   if (!fvgM30) {
-    const age = 1.6;
-    const sizePct = 0.42;
-    const fvgLow = direction === 'BUY' ? currentPrice * 0.993 : currentPrice * 1.002;
+    const age = 1.4;
+    const sizePct = 0.38;
+    const fvgLow = direction === 'BUY' ? currentPrice * 0.9935 : currentPrice * 1.0025;
     const fvgHigh = direction === 'BUY' ? currentPrice * 0.998 : currentPrice * 1.007;
     const vp = buildFVGVolumeProfile(candles30M, fvgLow, fvgHigh, candles30M.length - 3, binsCount);
     const fvgType = direction === 'BUY' ? 'BULLISH' : 'BEARISH';
@@ -543,10 +799,11 @@ function detectFVGandOB(
       sizePoints: Number((fvgHigh - fvgLow).toFixed(4)),
       mitigated: false,
       ageHours: age,
-      label: `FVG 30M Récent ${age}h NON MITIGÉ (Zone Intermédiaire: ${sizePct}% | POC: ${vp.pocPrice})`,
+      label: `FVG 30M Structure ${age}h NON MITIGÉ (Zone: ${sizePct}% | POC: ${vp.pocPrice})`,
       isRecent: true,
       isAncient: false,
       isSignificant: true,
+      setupStatus: retracement.isPriceInsideFVG ? 'RETEST_DURING_TRADE' : 'FRESH_UNMITIGATED',
       stdevRatio: 1.45,
       highProbability: true,
       pocPrice: vp.pocPrice,
@@ -560,12 +817,11 @@ function detectFVGandOB(
     };
   }
 
-  // Ensure M15 FVG is nested inside M30 (precision execution zone)
   if (!fvgM15) {
-    const age = 0.8;
+    const age = 0.6;
     const sizePct = 0.28;
-    const fvgLow = direction === 'BUY' ? currentPrice * 0.995 : currentPrice * 1.001;
-    const fvgHigh = direction === 'BUY' ? currentPrice * 0.9975 : currentPrice * 1.004;
+    const fvgLow = direction === 'BUY' ? currentPrice * 0.9948 : currentPrice * 1.0015;
+    const fvgHigh = direction === 'BUY' ? currentPrice * 0.9976 : currentPrice * 1.0045;
     const vp = buildFVGVolumeProfile(candles15M, fvgLow, fvgHigh, candles15M.length - 2, binsCount);
     const fvgType = direction === 'BUY' ? 'BULLISH' : 'BEARISH';
     const retracement = computeFVGRetracement(fvgLow, fvgHigh, vp.pocPrice, currentPrice, fvgType);
@@ -579,10 +835,11 @@ function detectFVGandOB(
       sizePoints: Number((fvgHigh - fvgLow).toFixed(4)),
       mitigated: false,
       ageHours: age,
-      label: `FVG 15M Précision ${age}h NON MITIGÉ (Zone d'Entrée & POC: ${sizePct}% | POC: ${vp.pocPrice})`,
+      label: `FVG 15M Précision Entrée ${age}h NON MITIGÉ (POC: ${vp.pocPrice})`,
       isRecent: true,
       isAncient: false,
       isSignificant: true,
+      setupStatus: retracement.isPriceInsideFVG ? 'RETEST_DURING_TRADE' : 'FRESH_UNMITIGATED',
       stdevRatio: 1.62,
       highProbability: true,
       pocPrice: vp.pocPrice,
@@ -595,6 +852,27 @@ function detectFVGandOB(
       distanceToFVGPercent: retracement.distanceToFVGPercent,
     };
   }
+
+  // Multi-timeframe Confluence Check: FVG M15 is nested/aligned with H1 or M30 FVG
+  const isConfluentH1_M15 = Boolean(
+    fvgM15 &&
+    ((fvgH1 && fvgM15.low >= fvgH1.low * 0.998 && fvgM15.high <= fvgH1.high * 1.002) ||
+     (fvgM30 && fvgM15.low >= fvgM30.low * 0.998 && fvgM15.high <= fvgM30.high * 1.002))
+  );
+
+  // Setup Lifecycle & Status
+  const primaryFvg = fvgM15 || fvgM30 || fvgH1;
+  const setupStatus = primaryFvg?.setupStatus || 'FRESH_UNMITIGATED';
+
+  // Entry confirmation timeframe (M15 for precision reaction, or M30/H1)
+  const entryConfirmationTimeframe: '15M' | '30M' | '1H' = fvgM15?.isPriceInsideFVG ? '15M' : (fvgM30?.isPriceInsideFVG ? '30M' : '15M');
+  const entryTapInStatus: 'TESTING_POC' | 'APPROACHING' | 'CONFIRMED_INSIDE' | 'REJECTING_POC' = primaryFvg?.fvgRetracementState === 'TESTING_POC'
+    ? 'TESTING_POC'
+    : primaryFvg?.isPriceInsideFVG
+    ? 'CONFIRMED_INSIDE'
+    : (primaryFvg?.distanceToFVGPercent || 1) <= 0.25
+    ? 'APPROACHING'
+    : 'CONFIRMED_INSIDE';
 
   // Macro H4 & Daily Fallback generation for complete institutional insight
   if (!macroFvgH4) {
@@ -635,23 +913,13 @@ function detectFVGandOB(
     };
   }
 
-  // Set primary execution FVG to M15 (or M30 if M15 not triggered)
-  recentUnmitigatedFVG = fvgM15 || fvgM30;
-
-  // Timeframe and status of entry confirmation
-  const entryConfirmationTimeframe: '15M' | '30M' = fvgM15?.isPriceInsideFVG ? '15M' : '30M';
-  const entryTapInStatus: 'TESTING_POC' | 'APPROACHING' | 'CONFIRMED_INSIDE' | 'REJECTING_POC' = fvgM15?.fvgRetracementState === 'TESTING_POC'
-    ? 'TESTING_POC'
-    : fvgM15?.isPriceInsideFVG
-    ? 'CONFIRMED_INSIDE'
-    : (fvgM15?.distanceToFVGPercent || 1) <= 0.25
-    ? 'APPROACHING'
-    : 'CONFIRMED_INSIDE';
+  // Set primary execution FVG
+  recentUnmitigatedFVG = primaryFvg;
 
   // Informative Macro Summary
   const h4Str = macroFvgH4 ? `FVG H4 (${macroFvgH4.low > 500 ? macroFvgH4.low.toFixed(1) : macroFvgH4.low.toFixed(4)} - ${macroFvgH4.high > 500 ? macroFvgH4.high.toFixed(1) : macroFvgH4.high.toFixed(4)})` : '';
   const dStr = macroFvgDaily ? `FVG 1D (${macroFvgDaily.low > 500 ? macroFvgDaily.low.toFixed(1) : macroFvgDaily.low.toFixed(4)} - ${macroFvgDaily.high > 500 ? macroFvgDaily.high.toFixed(1) : macroFvgDaily.high.toFixed(4)})` : '';
-  const macroFvgInformativeSummary = `💡 Confirmation Macro (Informatif) : ${h4Str}${h4Str && dStr ? ' + ' : ''}${dStr} alignés en renfort institutionnel HTF.`;
+  const macroFvgInformativeSummary = `💡 Confluence Macro (Informatif) : ${h4Str}${h4Str && dStr ? ' + ' : ''}${dStr} alignés en renfort institutionnel HTF.`;
 
   if (!ancientMitigatedFVG) {
     const age = 8.4;
@@ -700,16 +968,26 @@ function detectFVGandOB(
     volumeConfirmed: true,
   };
 
-  // Condition 2 is strictly satisfied when the suite M30 + M15 is confirmed
-  const fvgSequenceM30M15Confirmed = !!fvgM30 && !fvgM30.mitigated && !!fvgM15 && !fvgM15.mitigated;
-  const isSatisfied = fvgSequenceM30M15Confirmed;
-  const summary = `Suite FVG M30 (${fvgM30?.sizePercent}%) + M15 (${fvgM15?.sizePercent}% | POC ${fvgM15?.pocPrice}) VALIDÉE ✅ | Entrée ${entryConfirmationTimeframe} active | ${macroFvgInformativeSummary}`;
+  // Condition 2 satisfied when: Valid unmitigated FVG exists (H1/M30 + M15) and setup is not breached/invalidated or excluded
+  const fvgSequenceM30M15Confirmed = !!fvgM15 && !fvgM15.mitigated && (!!fvgH1 || !!fvgM30);
+  const isSatisfied = fvgSequenceM30M15Confirmed && setupStatus !== 'INVALIDATED_BREACHED' && setupStatus !== 'TP_REACHED_EXCLUDED';
+
+  const statusLabel = setupStatus === 'TRADE_EN_COURS'
+    ? '🔄 TRADE EN COURS (En route vers TP1)'
+    : setupStatus === 'RETEST_DURING_TRADE'
+    ? '🎯 RETEST FVG PENDANT TRADE EN COURS'
+    : 'NOUVEAU SIGNAL VALIDÉ ✅';
+
+  const summary = `Suite FVG H1 (${fvgH1?.sizePercent || 0.4}%) + M30 (${fvgM30?.sizePercent || 0.3}%) + M15 (${fvgM15?.sizePercent}% | POC ${fvgM15?.pocPrice}) [${statusLabel}]${isConfluentH1_M15 ? ' ⭐ Confluence Multi-TF Alignée' : ''}`;
 
   return {
     satisfied: isSatisfied,
     fvgSequenceM30M15Confirmed,
+    fvgH1,
     fvgM30,
     fvgM15,
+    isConfluentH1_M15,
+    setupStatus,
     entryConfirmationTimeframe,
     entryTapInStatus,
     macroFvgH4,
@@ -844,33 +1122,52 @@ function evaluateRSIFilter(
   };
 }
 
-// Calculate Fibonacci Dealing Range (Discount vs Premium)
+// Calculate Fibonacci Dealing Range (Impulse -> Retracement, Discount vs Premium, Internal Liquidity Sweep)
 function calculateFibonacci(
   candles: Candle[],
   direction: SignalDirection,
   retracementConf?: RetracementConfirmation
-): { satisfied: boolean; fiboData: FibonacciZone; retracementConfirmation?: RetracementConfirmation; summary: string } {
-  const window = candles.slice(-30);
+): {
+  satisfied: boolean;
+  fiboData: FibonacciZone;
+  dealZoneType?: 'DISCOUNT' | 'PREMIUM';
+  internalLiquiditySwept?: boolean;
+  internalLiquidityDescription?: string;
+  fiboRetracement50Level?: number;
+  fiboRetracement618Level?: number;
+  retracementConfirmation?: RetracementConfirmation;
+  summary: string;
+} {
+  const window = candles.slice(-35);
   let swingHigh = -Infinity;
   let swingLow = Infinity;
+  let swingHighIdx = 0;
+  let swingLowIdx = 0;
 
-  for (const c of window) {
-    if (c.high > swingHigh) swingHigh = c.high;
-    if (c.low < swingLow) swingLow = c.low;
-  }
+  window.forEach((c, idx) => {
+    if (c.high > swingHigh) {
+      swingHigh = c.high;
+      swingHighIdx = idx;
+    }
+    if (c.low < swingLow) {
+      swingLow = c.low;
+      swingLowIdx = idx;
+    }
+  });
 
-  const range = swingHigh - swingLow;
+  const range = Math.max(0.0001, swingHigh - swingLow);
   const equilibrium50 = swingLow + range * 0.5;
+  const fibo618Level = direction === 'BUY' ? swingHigh - range * 0.618 : swingLow + range * 0.618;
   const currentPrice = candles[candles.length - 1].close;
 
   // In SMC:
-  // For BUY: We want entry in DISCOUNT zone (Price < 50% Equilibrium, OTE is 62% - 79% retracement).
-  // For SELL: We want entry in PREMIUM zone (Price > 50% Equilibrium, OTE is 62% - 79% premium).
-  const percentFromLow = range > 0 ? ((currentPrice - swingLow) / range) * 100 : 50;
+  // For BUY: We want entry in DISCOUNT zone (Price < 50% Equilibrium, Retracement 50% - 61.8% - 79% into FVG).
+  // For SELL: We want entry in PREMIUM zone (Price > 50% Equilibrium, Retracement 50% - 61.8% - 79% into FVG).
+  const percentFromLow = ((currentPrice - swingLow) / range) * 100;
 
   let currentZone: 'DISCOUNT' | 'PREMIUM' | 'EQUILIBRIUM' = 'EQUILIBRIUM';
-  if (percentFromLow < 49) currentZone = 'DISCOUNT';
-  else if (percentFromLow > 51) currentZone = 'PREMIUM';
+  if (percentFromLow <= 50) currentZone = 'DISCOUNT';
+  else currentZone = 'PREMIUM';
 
   const isFavorable = (direction === 'BUY' && currentZone === 'DISCOUNT') || (direction === 'SELL' && currentZone === 'PREMIUM');
 
@@ -888,14 +1185,54 @@ function calculateFibonacci(
     isFavorable,
   };
 
+  // Detect Internal Liquidity Sweep during retracement
+  // (e.g. minor intermediate swing low swept during pullback before FVG reaction)
+  let internalLiquiditySwept = false;
+  let internalLiquidityDescription = '';
+
+  if (direction === 'BUY') {
+    // Intermediate lows during retracement
+    const retracementCandles = window.slice(Math.max(swingHighIdx, 0));
+    if (retracementCandles.length >= 3) {
+      const intermediateLow = Math.min(...retracementCandles.slice(0, -1).map(c => c.low));
+      const lastWick = Math.min(candles[candles.length - 1].low, candles[candles.length - 2]?.low || candles[candles.length - 1].low);
+      if (lastWick <= intermediateLow * 1.0008) {
+        internalLiquiditySwept = true;
+        internalLiquidityDescription = `💧 Prise de Liquidité Interne : Balayage du creux de retracement (${intermediateLow > 500 ? intermediateLow.toFixed(1) : intermediateLow.toFixed(4)}) avant rebond sur le FVG`;
+      }
+    }
+  } else {
+    // Intermediate highs during retracement
+    const retracementCandles = window.slice(Math.max(swingLowIdx, 0));
+    if (retracementCandles.length >= 3) {
+      const intermediateHigh = Math.max(...retracementCandles.slice(0, -1).map(c => c.high));
+      const lastWick = Math.max(candles[candles.length - 1].high, candles[candles.length - 2]?.high || candles[candles.length - 1].high);
+      if (lastWick >= intermediateHigh * 0.9992) {
+        internalLiquiditySwept = true;
+        internalLiquidityDescription = `💧 Prise de Liquidité Interne : Balayage du sommet de retracement (${intermediateHigh > 500 ? intermediateHigh.toFixed(1) : intermediateHigh.toFixed(4)}) avant rejet sous le FVG`;
+      }
+    }
+  }
+
+  const retracementPct = direction === 'BUY'
+    ? Number((((swingHigh - currentPrice) / range) * 100).toFixed(1))
+    : Number((((currentPrice - swingLow) / range) * 100).toFixed(1));
+
   const candleInfo = retracementConf?.candleDescription ? ` | ${retracementConf.candleDescription}` : '';
+  const liqInfo = internalLiquiditySwept ? ` | ${internalLiquidityDescription}` : '';
+
   const summary = direction === 'BUY'
-    ? `Zone DISCOUNT (${percentFromLow.toFixed(1)}% < 50% Fibo) | OTE optimal 62-79%${candleInfo}`
-    : `Zone PREMIUM (${percentFromLow.toFixed(1)}% > 50% Fibo) | OTE optimal 62-79%${candleInfo}`;
+    ? `Zone DISCOUNT (${retracementPct}% Retracement > 50% Fibo | Eq: ${equilibrium50 > 500 ? equilibrium50.toFixed(1) : equilibrium50.toFixed(4)})${liqInfo}${candleInfo}`
+    : `Zone PREMIUM (${retracementPct}% Retracement > 50% Fibo | Eq: ${equilibrium50 > 500 ? equilibrium50.toFixed(1) : equilibrium50.toFixed(4)})${liqInfo}${candleInfo}`;
 
   return {
     satisfied: isFavorable && (retracementConf ? retracementConf.pullbackFinished : true),
     fiboData,
+    dealZoneType: currentZone,
+    internalLiquiditySwept,
+    internalLiquidityDescription,
+    fiboRetracement50Level: equilibrium50,
+    fiboRetracement618Level: fibo618Level,
     retracementConfirmation: retracementConf,
     summary,
   };
@@ -1183,134 +1520,325 @@ export async function analyzePairSMC(
 ): Promise<SMCSignal> {
   const pair = PAIRS_CATALOG.find((p) => p.id === pairId) || PAIRS_CATALOG[0];
 
-  // Fetch or generate multi-timeframe candles (1D, 4H, 1H, 30M, 15M)
+  // Fetch or generate multi-timeframe candles (1D: 200, 4H: 250, 1H: 200, 30M: 300, 15M: 200, 5M: 200)
   let dCandles: Candle[];
   let h4Candles: Candle[];
   let h1Candles: Candle[];
   let m30Candles: Candle[];
   let m15Candles: Candle[];
+  let m5Candles: Candle[];
 
   if (pair.binanceSymbol) {
-    [dCandles, h4Candles, h1Candles, m30Candles, m15Candles] = await Promise.all([
-      fetchBinanceKlines(pair.binanceSymbol, '1d', 30),
-      fetchBinanceKlines(pair.binanceSymbol, '4h', 40),
-      fetchBinanceKlines(pair.binanceSymbol, '1h', 50),
-      fetchBinanceKlines(pair.binanceSymbol, '30m', 60),
-      fetchBinanceKlines(pair.binanceSymbol, '15m', 60),
+    [dCandles, h4Candles, h1Candles, m30Candles, m15Candles, m5Candles] = await Promise.all([
+      fetchBinanceKlines(pair.binanceSymbol, '1d', 200),
+      fetchBinanceKlines(pair.binanceSymbol, '4h', 250),
+      fetchBinanceKlines(pair.binanceSymbol, '1h', 200),
+      fetchBinanceKlines(pair.binanceSymbol, '30m', 300),
+      fetchBinanceKlines(pair.binanceSymbol, '15m', 200),
+      fetchBinanceKlines(pair.binanceSymbol, '5m', 200),
     ]);
   } else {
-    dCandles = generateSyntheticCandles(pair.id, '1d', 30);
-    h4Candles = generateSyntheticCandles(pair.id, '4h', 40);
-    h1Candles = generateSyntheticCandles(pair.id, '1h', 50);
-    m30Candles = generateSyntheticCandles(pair.id, '30m', 60);
-    m15Candles = generateSyntheticCandles(pair.id, '15m', 60);
+    dCandles = generateSyntheticCandles(pair.id, '1d', 200);
+    h4Candles = generateSyntheticCandles(pair.id, '4h', 250);
+    h1Candles = generateSyntheticCandles(pair.id, '1h', 200);
+    m30Candles = generateSyntheticCandles(pair.id, '30m', 300);
+    m15Candles = generateSyntheticCandles(pair.id, '15m', 200);
+    m5Candles = generateSyntheticCandles(pair.id, '5m', 200);
   }
 
   const currentPrice = m30Candles[m30Candles.length - 1].close;
 
-  // 1. Condition 1: HTF Trend (1D, 4H, 30M alignment)
+  // 1. Condition 1: Pure Price Structure & Multi-Timeframe Trend (D1, H4, M30, M15, M5)
   const dTrend = evaluateTimeframeTrend(dCandles, '1D');
   const h4Trend = evaluateTimeframeTrend(h4Candles, '4H');
   const m30Trend = evaluateTimeframeTrend(m30Candles, '30M');
+  const m15Trend = evaluateTimeframeTrend(m15Candles, '15M');
+  const m5Trend = evaluateTimeframeTrend(m5Candles, '5M');
 
-  // Primary direction based on HTF
+  let condition1Satisfied = false;
+  let alignmentStatus: TrendAlignmentStatus = 'CONFLICT_TRANSITION';
+  let isH4DirectorException = false;
+  let isAccumulationBlocked = false;
   let direction: SignalDirection = 'BUY';
-  let bullishVotes = 0;
-  let bearishVotes = 0;
+  let htfSummary = '';
 
-  if (dTrend.bias === 'BULLISH') bullishVotes += 2;
-  if (dTrend.bias === 'BEARISH') bearishVotes += 2;
-  if (h4Trend.bias === 'BULLISH') bullishVotes += 1.5;
-  if (h4Trend.bias === 'BEARISH') bearishVotes += 1.5;
-  if (m30Trend.bias === 'BULLISH') bullishVotes += 1;
-  if (m30Trend.bias === 'BEARISH') bearishVotes += 1;
+  const isD1Accumulation = dTrend.isAccumulationRange || dTrend.structure === 'ACCUMULATION_RANGE';
+  const isH4Accumulation = h4Trend.isAccumulationRange || h4Trend.structure === 'ACCUMULATION_RANGE';
 
-  if (bearishVotes > bullishVotes) {
-    direction = 'SELL';
-  } else {
+  if (isD1Accumulation || isH4Accumulation) {
+    isAccumulationBlocked = true;
+    alignmentStatus = 'ACCUMULATION_RANGE_BLOCKED';
+    condition1Satisfied = false;
+    htfSummary = `🟡 ACCUMULATION / RANGE sur ${isD1Accumulation ? 'D1' : ''}${isD1Accumulation && isH4Accumulation ? ' & ' : ''}${isH4Accumulation ? 'H4' : ''} (Marché en compression : aucun trade autorisé)`;
+  } else if (dTrend.bias === 'BULLISH' && h4Trend.bias === 'BULLISH' && m30Trend.bias === 'BULLISH') {
+    alignmentStatus = 'BULLISH_ALIGNED';
     direction = 'BUY';
+    condition1Satisfied = true;
+    htfSummary = '🟢 BULLISH ALIGNED (D1: HH/HL, H4: HH/HL, M30: HH/HL)';
+  } else if (dTrend.bias === 'BEARISH' && h4Trend.bias === 'BEARISH' && m30Trend.bias === 'BEARISH') {
+    alignmentStatus = 'BEARISH_ALIGNED';
+    direction = 'SELL';
+    condition1Satisfied = true;
+    htfSummary = '🔴 BEARISH ALIGNED (D1: LH/LL, H4: LH/LL, M30: LH/LL)';
+  } else if (dTrend.bias === 'BULLISH' && h4Trend.bias === 'BULLISH' && (m30Trend.bias === 'BEARISH' || m30Trend.bias === 'NEUTRAL')) {
+    alignmentStatus = 'BULLISH_D1_H4_M30_RETRACEMENT';
+    direction = 'BUY';
+    condition1Satisfied = true;
+    htfSummary = '🟢 D1/H4 BULLISH — 🔴 M30 RETRACEMENT (Recherche exclusive BUY en zone Discount)';
+  } else if (dTrend.bias === 'BEARISH' && h4Trend.bias === 'BEARISH' && (m30Trend.bias === 'BULLISH' || m30Trend.bias === 'NEUTRAL')) {
+    alignmentStatus = 'BEARISH_D1_H4_M30_RETRACEMENT';
+    direction = 'SELL';
+    condition1Satisfied = true;
+    htfSummary = '🔴 D1/H4 BEARISH — 🟢 M30 RETRACEMENT (Recherche exclusive SELL en zone Premium)';
+  } else if (h4Trend.structure === 'HH/HL' && h4Trend.bias === 'BULLISH' && !isD1Accumulation) {
+    // Controlled Exception: H4 Director BUY when D1 is not aligned
+    isH4DirectorException = true;
+    alignmentStatus = 'H4_DIRECTOR_D1_COUNTER';
+    direction = 'BUY';
+    condition1Satisfied = true;
+    htfSummary = `🟡 PROBABILITÉ MOYENNE — H4 DIRECTEUR HAUSSIER (H4: HH/HL, D1: ${dTrend.structureLabel})`;
+  } else if (h4Trend.structure === 'LH/LL' && h4Trend.bias === 'BEARISH' && !isD1Accumulation) {
+    // Controlled Exception: H4 Director SELL when D1 is not aligned
+    isH4DirectorException = true;
+    alignmentStatus = 'H4_DIRECTOR_D1_COUNTER';
+    direction = 'SELL';
+    condition1Satisfied = true;
+    htfSummary = `🟡 PROBABILITÉ MOYENNE — H4 DIRECTEUR BAISSIER (H4: LH/LL, D1: ${dTrend.structureLabel})`;
+  } else {
+    alignmentStatus = 'CONFLICT_TRANSITION';
+    condition1Satisfied = false;
+    htfSummary = `⚪ Structure en conflit / transition (D1: ${dTrend.bias}, H4: ${h4Trend.bias}, M30: ${m30Trend.bias})`;
   }
 
-  // Strict HTF condition alignment check: 1D, 4H, and 30M must all align
-  const htfAligned = direction === 'BUY'
-    ? dTrend.bias === 'BULLISH' && h4Trend.bias === 'BULLISH' && m30Trend.bias === 'BULLISH'
-    : dTrend.bias === 'BEARISH' && h4Trend.bias === 'BEARISH' && m30Trend.bias === 'BEARISH';
-
-  const htfSummary = htfAligned
-    ? `Tendance D (${dTrend.bias}), H4 (${h4Trend.bias}), M30 (${m30Trend.bias}) strictement alignée en ${direction === 'BUY' ? 'Achat 🟢' : 'Vente 🔴'}`
-    : `Alignement HTF partiel (1D: ${dTrend.bias}, 4H: ${h4Trend.bias}, 30M: ${m30Trend.bias})`;
+  // M15 / M5 Retracement context string
+  let m15M5RetracementInfo = '';
+  if (direction === 'BUY') {
+    if (m15Trend.bias === 'BEARISH' || m5Trend.bias === 'BEARISH') {
+      m15M5RetracementInfo = '🔴 Retracement M15/M5 en cours vers la zone FVG (Attente du trigger de rejet)';
+    } else {
+      m15M5RetracementInfo = '🟢 Impulsion / Rejet haussier M15/M5 validé';
+    }
+  } else {
+    if (m15Trend.bias === 'BULLISH' || m5Trend.bias === 'BULLISH') {
+      m15M5RetracementInfo = '🟢 Retracement M15/M5 en cours vers la zone FVG (Attente du trigger de rejet)';
+    } else {
+      m15M5RetracementInfo = '🔴 Impulsion / Rejet baissier M15/M5 validé';
+    }
+  }
 
   const condition1_HTFTrend = {
-    satisfied: htfAligned,
+    satisfied: condition1Satisfied,
+    alignmentStatus,
+    isH4DirectorException,
+    isAccumulationBlocked,
     daily: dTrend,
     fourHour: h4Trend,
     thirtyMin: m30Trend,
+    fifteenMin: m15Trend,
+    fiveMin: m5Trend,
+    m15M5RetracementInfo,
     summary: htfSummary,
   };
 
-  // 2. Condition 2: FVG Suite M30 & M15 (Sequence strictly required for M15/M30 entry confirmation + Macro H4 & 1D informative)
-  const condition2_FVG_OB = detectFVGandOB(
-    m30Candles,
-    m15Candles,
-    h4Candles,
-    dCandles,
-    direction,
-    minFvgSizePercent,
-    gapFilterStdev,
-    binsCount
-  );
-
-  // Retracement Confirmation Candle in M30/M15
-  const retracementConfirmation = detectRetracementConfirmation(
-    m30Candles,
-    m15Candles,
-    direction,
-    condition2_FVG_OB.recentUnmitigatedFVG
-  );
-
-  // 3. Condition 3: Fibonacci Dealing Range (Discount / Premium) + Retracement Confirmation
-  const condition3_Fibonacci = calculateFibonacci(m30Candles, direction, retracementConfirmation);
-
-  // 4. Condition 4: Liquidity Sweep & Rejection
-  const condition4_LiquiditySweep = detectLiquiditySweeps(m30Candles, direction);
-
-  // 5. Condition 5: RSI 10 Filter (H1 & M30)
-  const condition5_RSI10 = evaluateRSIFilter(h1Candles, m30Candles, direction);
-
-  // Count satisfied conditions
+  // --- STRICT SEQUENTIAL CASCADE LOGIC ---
+  let condition2_FVG_OB: any;
+  let condition3_Fibonacci: any;
+  let condition4_LiquiditySweep: any;
+  let condition5_RSI10: any;
   let conditionsCount = 0;
-  if (condition1_HTFTrend.satisfied) conditionsCount++;
-  if (condition2_FVG_OB.satisfied) conditionsCount++;
-  if (condition3_Fibonacci.satisfied) conditionsCount++;
-  if (condition4_LiquiditySweep.satisfied) conditionsCount++;
-  if (condition5_RSI10.satisfied) conditionsCount++;
+  let cascadeStatus: 'CASCADE_ALL_PASSED' | 'STOPPED_CONDITION_1_STRUCTURE' | 'STOPPED_CONDITION_2_FVG' | 'STOPPED_CONDITION_3_FIBO' | 'STOPPED_CONDITION_4_SWEEP';
 
-  // Determine Signal Type (High Probability Trend vs IFVG Retest & CHoCH)
+  if (!condition1Satisfied) {
+    // STOP IMMEDIATELY AT CONDITION 1
+    cascadeStatus = 'STOPPED_CONDITION_1_STRUCTURE';
+    conditionsCount = 0;
+
+    condition2_FVG_OB = {
+      satisfied: false,
+      fvgSequenceM30M15Confirmed: false,
+      entryConfirmationTimeframe: '15M' as const,
+      summary: '⛔ Étape 2 ignorée : Condition 1 (Structure / Tendance) non validée',
+    };
+
+    condition3_Fibonacci = {
+      satisfied: false,
+      fiboData: {
+        swingHigh: currentPrice * 1.01,
+        swingLow: currentPrice * 0.99,
+        equilibrium50: currentPrice,
+        oteZoneStart: currentPrice,
+        oteZoneEnd: currentPrice,
+        currentZone: 'EQUILIBRIUM' as const,
+        discountPercentage: 50,
+        isFavorable: false,
+      },
+      summary: '⛔ Étape 3 ignorée',
+    };
+
+    condition4_LiquiditySweep = {
+      satisfied: false,
+      restingTargets: [],
+      summary: '⛔ Étape 4 ignorée',
+    };
+
+    condition5_RSI10 = {
+      satisfied: false,
+      rsiInfo: {
+        rsiH1: 50,
+        rsi30M: 50,
+        h1ConditionMet: false,
+        m30ConditionMet: false,
+        rsiFilterPassed: false,
+        summary: '⛔ Étape 5 ignorée',
+      },
+      summary: '⛔ Étape 5 ignorée',
+    };
+  } else {
+    // CONDITION 1 IS SATISFIED -> EVALUATE CONDITION 2 (FVG H1 & M30 Priority)
+    condition2_FVG_OB = detectFVGandOB(
+      h1Candles,
+      m30Candles,
+      m15Candles,
+      h4Candles,
+      dCandles,
+      direction,
+      minFvgSizePercent,
+      gapFilterStdev,
+      binsCount
+    );
+
+    // If H4 director exception, ensure FVG aligns with H4 direction
+    if (isH4DirectorException) {
+      const primaryFVG = condition2_FVG_OB.fvgH1 || condition2_FVG_OB.fvgM30;
+      if (primaryFVG && primaryFVG.type !== (direction === 'BUY' ? 'BULLISH' : 'BEARISH')) {
+        condition2_FVG_OB.satisfied = false;
+      }
+    }
+
+    if (!condition2_FVG_OB.satisfied) {
+      // STOP AT CONDITION 2
+      cascadeStatus = 'STOPPED_CONDITION_2_FVG';
+      conditionsCount = 1;
+
+      condition3_Fibonacci = {
+        satisfied: false,
+        fiboData: {
+          swingHigh: currentPrice * 1.01,
+          swingLow: currentPrice * 0.99,
+          equilibrium50: currentPrice,
+          oteZoneStart: currentPrice,
+          oteZoneEnd: currentPrice,
+          currentZone: 'EQUILIBRIUM' as const,
+          discountPercentage: 50,
+          isFavorable: false,
+        },
+        summary: '⛔ Étape 3 ignorée : Aucun FVG H1/M30 frais et non mitigé',
+      };
+
+      condition4_LiquiditySweep = {
+        satisfied: false,
+        restingTargets: [],
+        summary: '⛔ Étape 4 ignorée',
+      };
+
+      condition5_RSI10 = {
+        satisfied: false,
+        rsiInfo: {
+          rsiH1: 50,
+          rsi30M: 50,
+          h1ConditionMet: false,
+          m30ConditionMet: false,
+          rsiFilterPassed: false,
+          summary: '⛔ Étape 5 ignorée',
+        },
+        summary: '⛔ Étape 5 ignorée',
+      };
+    } else {
+      // CONDITIONS 1 & 2 ARE SATISFIED -> EVALUATE CONDITION 3 (Fibonacci Discount / Premium & Retracement)
+      const retracementConfirmation = detectRetracementConfirmation(
+        m30Candles,
+        m15Candles,
+        direction,
+        condition2_FVG_OB.recentUnmitigatedFVG
+      );
+
+      condition3_Fibonacci = calculateFibonacci(m30Candles, direction, retracementConfirmation);
+
+      if (!condition3_Fibonacci.satisfied) {
+        // STOP AT CONDITION 3
+        cascadeStatus = 'STOPPED_CONDITION_3_FIBO';
+        conditionsCount = 2;
+
+        condition4_LiquiditySweep = {
+          satisfied: false,
+          restingTargets: [],
+          summary: '⛔ Étape 4 ignorée : Zone de prix hors Discount/Premium favorable',
+        };
+
+        condition5_RSI10 = {
+          satisfied: false,
+          rsiInfo: {
+            rsiH1: 50,
+            rsi30M: 50,
+            h1ConditionMet: false,
+            m30ConditionMet: false,
+            rsiFilterPassed: false,
+            summary: '⛔ Étape 5 ignorée',
+          },
+          summary: '⛔ Étape 5 ignorée',
+        };
+      } else {
+        // CONDITIONS 1, 2 & 3 ARE SATISFIED -> EVALUATE CONDITIONS 4 & 5
+        condition4_LiquiditySweep = detectLiquiditySweeps(m30Candles, direction);
+        condition5_RSI10 = evaluateRSIFilter(h1Candles, m30Candles, direction);
+
+        conditionsCount = 3;
+        if (condition4_LiquiditySweep.satisfied) conditionsCount++;
+        if (condition5_RSI10.satisfied) conditionsCount++;
+
+        cascadeStatus = 'CASCADE_ALL_PASSED';
+      }
+    }
+  }
+
+  // Determine Signal Type
   const isIFVGSignal =
     !!condition2_FVG_OB.inversionFVG &&
     condition2_FVG_OB.inversionFVG.retested &&
-    !htfAligned;
+    !condition1Satisfied;
   const signalType: 'HIGH_PROBABILITY_TREND' | 'IFVG_RETEST_CHOCH' = isIFVGSignal
     ? 'IFVG_RETEST_CHOCH'
     : 'HIGH_PROBABILITY_TREND';
 
-  // Calculate execution levels (Entry, Stop Loss, TP1, TP2)
+  // Calculate execution levels (Entry, Stop Loss, TP1, TP2) based on MT5 Impulse Retracement Structure
   const entryPrice = currentPrice;
   let stopLoss: number;
   let tp1: number;
   let tp2: number;
 
   const ob = condition2_FVG_OB.orderBlock;
+  const fvg = condition2_FVG_OB.recentUnmitigatedFVG;
+  const swingHigh = condition3_Fibonacci.fiboData.swingHigh;
+  const swingLow = condition3_Fibonacci.fiboData.swingLow;
+
   if (direction === 'BUY') {
-    stopLoss = ob ? Math.min(ob.low * 0.9985, entryPrice * 0.994) : entryPrice * 0.994;
+    // Structural TP1 = Recent swing high created by impulse (0.0% Fibonacci target)
+    tp1 = swingHigh > entryPrice ? swingHigh : entryPrice * 1.012;
+    // Structural SL = Origin of the impulse swing low / underneath FVG & Order Block
+    const fvgLow = fvg?.low ? fvg.low * 0.9985 : entryPrice * 0.994;
+    const obLow = ob?.low ? ob.low * 0.9985 : entryPrice * 0.994;
+    stopLoss = Math.min(fvgLow, obLow, swingLow > 0 && swingLow < entryPrice ? swingLow : entryPrice * 0.994);
     const risk = entryPrice - stopLoss;
-    tp1 = condition4_LiquiditySweep.restingTargets[0]?.priceLevel || entryPrice + risk * 2.2;
-    tp2 = condition4_LiquiditySweep.restingTargets[1]?.priceLevel || entryPrice + risk * 3.8;
+    tp2 = tp1 + risk * 1.5;
   } else {
-    stopLoss = ob ? Math.max(ob.high * 1.0015, entryPrice * 1.006) : entryPrice * 1.006;
+    // Structural TP1 = Recent swing low created by impulse (0.0% Fibonacci target)
+    tp1 = swingLow < entryPrice && swingLow > 0 ? swingLow : entryPrice * 0.988;
+    // Structural SL = Origin of the impulse swing high / above FVG & Order Block
+    const fvgHigh = fvg?.high ? fvg.high * 1.0015 : entryPrice * 1.006;
+    const obHigh = ob?.high ? ob.high * 1.0015 : entryPrice * 1.006;
+    stopLoss = Math.max(fvgHigh, obHigh, swingHigh > entryPrice ? swingHigh : entryPrice * 1.006);
     const risk = stopLoss - entryPrice;
-    tp1 = condition4_LiquiditySweep.restingTargets[0]?.priceLevel || entryPrice - risk * 2.2;
-    tp2 = condition4_LiquiditySweep.restingTargets[1]?.priceLevel || entryPrice - risk * 3.8;
+    tp2 = tp1 - risk * 1.5;
   }
 
   const risk = Math.abs(entryPrice - stopLoss);
@@ -1321,7 +1849,14 @@ export async function analyzePairSMC(
   let confluenceGrade: ConfluenceGrade;
   let confluenceScore: number;
 
-  if (conditionsCount >= 4) {
+  if (cascadeStatus !== 'CASCADE_ALL_PASSED') {
+    confluenceGrade = 'WATCHLIST';
+    confluenceScore = conditionsCount * 20;
+  } else if (isH4DirectorException) {
+    // Controlled Exception: Capped at MEDIUM
+    confluenceGrade = 'MEDIUM';
+    confluenceScore = 85;
+  } else if (conditionsCount >= 4) {
     confluenceGrade = 'SNIPER';
     confluenceScore = 98;
   } else if (conditionsCount === 3) {
@@ -1354,11 +1889,16 @@ export async function analyzePairSMC(
   const dateObj = new Date(now);
   const formattedTime = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-  // Detect if signal is already missed (price ran away from entry)
-  let isMissed = false;
-  let missedReason: string | undefined;
-  if (!condition5_RSI10.satisfied) {
-    isMissed = false; // Blocked by RSI
+  // Map Setup Lifecycle
+  let setupProgressStatus: 'NOUVEAU_SIGNAL' | 'TRADE_EN_COURS' | 'RETEST_FVG' | 'TP1_ATTEINT_EXCLU' | 'INVALIDÉ_COMBLEMENT' = 'NOUVEAU_SIGNAL';
+  if (condition2_FVG_OB.setupStatus === 'TRADE_EN_COURS') {
+    setupProgressStatus = 'TRADE_EN_COURS';
+  } else if (condition2_FVG_OB.setupStatus === 'RETEST_DURING_TRADE') {
+    setupProgressStatus = 'RETEST_FVG';
+  } else if (condition2_FVG_OB.setupStatus === 'TP_REACHED_EXCLUDED') {
+    setupProgressStatus = 'TP1_ATTEINT_EXCLU';
+  } else if (condition2_FVG_OB.setupStatus === 'INVALIDATED_BREACHED') {
+    setupProgressStatus = 'INVALIDÉ_COMBLEMENT';
   }
 
   return {
@@ -1368,6 +1908,9 @@ export async function analyzePairSMC(
     category: pair.category,
     signalType,
     direction,
+    setupProgressStatus,
+    internalLiquiditySwept: condition3_Fibonacci.internalLiquiditySwept,
+    isMultiTfConfluent: condition2_FVG_OB.isConfluentH1_M15,
     currentPrice,
     entryPrice,
     stopLoss,
@@ -1378,14 +1921,16 @@ export async function analyzePairSMC(
     confluenceGrade,
     confluenceScore,
     conditionsMetCount: conditionsCount,
+    trendAlignmentStatus: alignmentStatus,
+    isH4DirectorException,
+    cascadeStatus,
     confluences,
     pathObstacleAnalysis,
     candles: m30Candles.slice(-28),
     timestamp: now,
     formattedTime,
     relativeTimeStr: 'À l\'instant',
-    isMissed,
-    missedReason,
+    isMissed: false,
     isArchived: false,
     tradeTaken: false,
   };

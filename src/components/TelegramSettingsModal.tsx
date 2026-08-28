@@ -340,6 +340,69 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
               </div>
             </div>
 
+            {/* 3.1 Sélection Spécifique des Paires */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="font-semibold text-zinc-200 flex items-center gap-2 text-xs uppercase tracking-wider">
+                  <Zap className="h-4 w-4 text-emerald-400" />
+                  Paires Individuelles ({activePairs.length === 0 ? 'Toutes Actives' : `${activePairs.length} sélectionnée(s)`})
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setActivePairs([])}
+                  className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                    activePairs.length === 0
+                      ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300 font-bold'
+                      : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  Toutes les paires
+                </button>
+              </div>
+
+              <div className="p-3 rounded-xl bg-zinc-950/60 border border-zinc-800 space-y-3 max-h-48 overflow-y-auto no-scrollbar">
+                {['SYNTHETICS', 'CRYPTO', 'COMMODITIES', 'FOREX'].map((catKey) => {
+                  const catPairs = (availablePairs || []).filter((p) => p.category === catKey);
+                  if (catPairs.length === 0) return null;
+                  return (
+                    <div key={catKey} className="space-y-1.5">
+                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                        {catKey === 'SYNTHETICS' ? '⚡ Deriv Volatility Synthetics' : catKey === 'CRYPTO' ? '🪙 Crypto-monnaies' : catKey === 'COMMODITIES' ? '🥇 Matières Premières' : '💱 Forex'}
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {catPairs.map((p) => {
+                          const isSelected = activePairs.includes(p.id);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                if (activePairs.includes(p.id)) {
+                                  setActivePairs(activePairs.filter((id) => id !== p.id));
+                                } else {
+                                  setActivePairs([...activePairs, p.id]);
+                                }
+                              }}
+                              className={`px-2.5 py-1 rounded-lg border text-xs font-mono transition-all flex items-center gap-1 ${
+                                isSelected
+                                  ? 'bg-emerald-900/60 border-emerald-500/60 text-emerald-200 font-bold shadow-sm'
+                                  : activePairs.length === 0
+                                  ? 'bg-zinc-900/80 border-zinc-750 text-zinc-300 hover:border-zinc-600'
+                                  : 'bg-zinc-950 border-zinc-850 text-zinc-600 hover:text-zinc-400'
+                              }`}
+                            >
+                              <span>{p.symbol}</span>
+                              {isSelected && <Check className="h-3 w-3 text-emerald-400 shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* 4. Unités de Temps Ciblées */}
             <div className="space-y-2">
               <label className="font-semibold text-zinc-200 flex items-center gap-2 text-xs uppercase tracking-wider">

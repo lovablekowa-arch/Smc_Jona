@@ -667,8 +667,35 @@ export default function App() {
       if (selectedCategory !== 'ALL' && s.category !== selectedCategory) return false;
       if (selectedGrade !== 'ALL' && s.confluenceGrade !== selectedGrade) return false;
       if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        if (!s.pair.toLowerCase().includes(q) && !s.category.toLowerCase().includes(q)) return false;
+        const q = searchQuery.toLowerCase().trim();
+        const pairLower = (s.pair || '').toLowerCase();
+        const symbolLower = (s.symbol || '').toLowerCase();
+        const idLower = (s.id || '').toLowerCase();
+        const catLower = (s.category || '').toLowerCase();
+
+        // Exact disambiguation so V100 does not bleed into V100(1s) and vice versa
+        if (q === 'v100' && (symbolLower === 'v100_1s' || pairLower.includes('(1s)'))) return false;
+        if (q === 'v75' && (symbolLower === 'v75_1s' || pairLower.includes('(1s)'))) return false;
+        if (q === 'v50' && (symbolLower === 'v50_1s' || pairLower.includes('(1s)'))) return false;
+        if (q === 'v25' && (symbolLower === 'v25_1s' || pairLower.includes('(1s)'))) return false;
+        if (q === 'v10' && (symbolLower === 'v10_1s' || pairLower.includes('(1s)'))) return false;
+
+        const is1sQuery = q.includes('1s') || q.includes('(s)') || q.includes('_1s');
+        if (is1sQuery) {
+          if (q.includes('100') && !(symbolLower === 'v100_1s' || pairLower.includes('100 (1s)'))) return false;
+          if (q.includes('75') && !(symbolLower === 'v75_1s' || pairLower.includes('75 (1s)'))) return false;
+          if (q.includes('50') && !(symbolLower === 'v50_1s' || pairLower.includes('50 (1s)'))) return false;
+          if (q.includes('25') && !(symbolLower === 'v25_1s' || pairLower.includes('25 (1s)'))) return false;
+          if (q.includes('10') && !(symbolLower === 'v10_1s' || pairLower.includes('10 (1s)'))) return false;
+        }
+
+        const matches =
+          pairLower.includes(q) ||
+          symbolLower.includes(q) ||
+          idLower.includes(q) ||
+          catLower.includes(q);
+
+        if (!matches) return false;
       }
       return true;
     })
@@ -721,7 +748,7 @@ export default function App() {
       <MarketTicker
         pairs={pairs}
         onSelectPair={(id) => {
-          setSearchQuery(id);
+          setSearchQuery((prev) => (prev === id ? '' : id));
         }}
       />
 

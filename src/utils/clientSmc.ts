@@ -1,4 +1,4 @@
-import { ConfluenceGrade, MarketCategory, PairInfo, SignalDirection, SMCSignal } from '../types';
+import { ConfluenceGrade, MarketCategory, PairInfo, SignalDirection, SMCSignal, TrendAlignmentStatus } from '../types';
 
 export const CLIENT_PAIRS_CATALOG: Array<{
   id: string;
@@ -10,30 +10,30 @@ export const CLIENT_PAIRS_CATALOG: Array<{
   basePrice: number;
 }> = [
   // 1. INDICES SYNTHÉTIQUES DERIV VOLATILITY (PRIORITÉ ABSOLUE N°1)
-  { id: 'V75', symbol: 'Volatility 75', name: 'Volatility 75 Index (V75)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 485600.00 },
-  { id: 'V75_1S', symbol: 'Volatility 75 (1s)', name: 'Volatility 75 (1s) Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 893400.00 },
-  { id: 'V100', symbol: 'Volatility 100', name: 'Volatility 100 Index (V100)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 2140.50 },
-  { id: 'V100_1S', symbol: 'Volatility 100 (1s)', name: 'Volatility 100 (1s) Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 21450.00 },
-  { id: 'V50', symbol: 'Volatility 50', name: 'Volatility 50 Index (V50)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 388.40 },
-  { id: 'V50_1S', symbol: 'Volatility 50 (1s)', name: 'Volatility 50 (1s) Index', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 785.60 },
-  { id: 'V25', symbol: 'Volatility 25', name: 'Volatility 25 Index (V25)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 2940.30 },
-  { id: 'V25_1S', symbol: 'Volatility 25 (1s)', name: 'Volatility 25 (1s) Index', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 9840.20 },
-  { id: 'V10', symbol: 'Volatility 10', name: 'Volatility 10 Index (V10)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 6842.15 },
-  { id: 'V10_1S', symbol: 'Volatility 10 (1s)', name: 'Volatility 10 (1s) Index', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 7920.30 },
-  { id: 'CRASH1000', symbol: 'Crash 1000', name: 'Crash 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 5620.80 },
-  { id: 'BOOM1000', symbol: 'Boom 1000', name: 'Boom 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 13420.50 },
-  { id: 'STEP', symbol: 'Step Index', name: 'Step Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 8650.20 },
-  { id: 'JUMP75', symbol: 'Jump 75', name: 'Jump 75 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 365200.00 },
+  { id: 'V100', symbol: 'Volatility 100 (V100)', name: 'Volatility 100 Index (V100)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 2140.50 },
+  { id: 'V100_1S', symbol: 'Volatility 100 (1s) (V100 1s)', name: 'Volatility 100 (1s) Index (V100 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 214500.00 },
+  { id: 'V75', symbol: 'Volatility 75 (V75)', name: 'Volatility 75 Index (V75)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 485600.00 },
+  { id: 'V75_1S', symbol: 'Volatility 75 (1s) (V75 1s)', name: 'Volatility 75 (1s) Index (V75 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 23450.00 },
+  { id: 'V50', symbol: 'Volatility 50 (V50)', name: 'Volatility 50 Index (V50)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 388.40 },
+  { id: 'V50_1S', symbol: 'Volatility 50 (1s) (V50 1s)', name: 'Volatility 50 (1s) Index (V50 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 8785.60 },
+  { id: 'V25', symbol: 'Volatility 25 (V25)', name: 'Volatility 25 Index (V25)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 2940.30 },
+  { id: 'V25_1S', symbol: 'Volatility 25 (1s) (V25 1s)', name: 'Volatility 25 (1s) Index (V25 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 618400.00 },
+  { id: 'V10', symbol: 'Volatility 10 (V10)', name: 'Volatility 10 Index (V10)', category: 'SYNTHETICS', decimals: 3, unit: 'pts', basePrice: 6842.15 },
+  { id: 'V10_1S', symbol: 'Volatility 10 (1s) (V10 1s)', name: 'Volatility 10 (1s) Index (V10 1s)', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 792400.00 },
+  { id: 'CRASH1000', symbol: 'Crash 1000 (C1000)', name: 'Crash 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 5620.80 },
+  { id: 'BOOM1000', symbol: 'Boom 1000 (B1000)', name: 'Boom 1000 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 13420.50 },
+  { id: 'STEP', symbol: 'Step Index (STEP)', name: 'Step Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 8650.20 },
+  { id: 'JUMP75', symbol: 'Jump 75 (J75)', name: 'Jump 75 Index', category: 'SYNTHETICS', decimals: 2, unit: 'pts', basePrice: 365200.00 },
 
   // 2. CRYPTO-MONNAIES (PRIORITÉ N°2)
-  { id: 'BTCUSDT', symbol: 'BTC/USDT', name: 'Bitcoin', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 94250.0 },
-  { id: 'ETHUSDT', symbol: 'ETH/USDT', name: 'Ethereum', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 2840.5 },
-  { id: 'SOLUSDT', symbol: 'SOL/USDT', name: 'Solana', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 198.2 },
-  { id: 'BNBUSDT', symbol: 'BNB/USDT', name: 'BNB (Binance Coin)', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 654.8 },
-  { id: 'XRPUSDT', symbol: 'XRP/USDT', name: 'Ripple XRP', category: 'CRYPTO', decimals: 4, unit: '$', basePrice: 2.4500 },
+  { id: 'BTCUSDT', symbol: 'BTC/USDT (Bitcoin)', name: 'Bitcoin', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 94250.0 },
+  { id: 'ETHUSDT', symbol: 'ETH/USDT (Ethereum)', name: 'Ethereum', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 2840.5 },
+  { id: 'SOLUSDT', symbol: 'SOL/USDT (Solana)', name: 'Solana', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 198.2 },
+  { id: 'BNBUSDT', symbol: 'BNB/USDT (BNB)', name: 'BNB (Binance Coin)', category: 'CRYPTO', decimals: 2, unit: '$', basePrice: 654.8 },
+  { id: 'XRPUSDT', symbol: 'XRP/USDT (Ripple)', name: 'Ripple XRP', category: 'CRYPTO', decimals: 4, unit: '$', basePrice: 2.4500 },
 
   // 3. MATIÈRES PREMIÈRES & FOREX (PRIORITÉ N°3)
-  { id: 'XAUUSD', symbol: 'XAU/USD', name: 'Or Spot (Gold)', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 2715.40 },
+  { id: 'XAUUSD', symbol: 'XAU/USD (Gold/Or)', name: 'Or Spot (Gold)', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 2715.40 },
   { id: 'EURUSD', symbol: 'EUR/USD', name: 'Euro / US Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 1.08450 },
   { id: 'GBPUSD', symbol: 'GBP/USD', name: 'British Pound / US Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 1.29820 },
   { id: 'USDJPY', symbol: 'USD/JPY', name: 'US Dollar / Japanese Yen', category: 'FOREX', decimals: 3, unit: '¥', basePrice: 153.420 },
@@ -41,8 +41,8 @@ export const CLIENT_PAIRS_CATALOG: Array<{
   { id: 'AUDUSD', symbol: 'AUD/USD', name: 'Australian Dollar / US Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 0.65830 },
   { id: 'USDCAD', symbol: 'USD/CAD', name: 'US Dollar / Canadian Dollar', category: 'FOREX', decimals: 5, unit: '', basePrice: 1.38740 },
   { id: 'USDCHF', symbol: 'USD/CHF', name: 'US Dollar / Swiss Franc', category: 'FOREX', decimals: 5, unit: '', basePrice: 0.88410 },
-  { id: 'XAGUSD', symbol: 'XAG/USD', name: 'Argent Spot (Silver)', category: 'COMMODITIES', decimals: 3, unit: '$', basePrice: 32.180 },
-  { id: 'USOIL', symbol: 'USOIL', name: 'Pétrole Brut WTI', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 71.85 },
+  { id: 'XAGUSD', symbol: 'XAG/USD (Silver/Argent)', name: 'Argent Spot (Silver)', category: 'COMMODITIES', decimals: 3, unit: '$', basePrice: 32.180 },
+  { id: 'USOIL', symbol: 'USOIL (Pétrole WTI)', name: 'Pétrole Brut WTI', category: 'COMMODITIES', decimals: 2, unit: '$', basePrice: 71.85 },
 ];
 
 export function generateClientFallbackPairs(): PairInfo[] {
@@ -160,6 +160,9 @@ export function generateClientFallbackSignals(): SMCSignal[] {
       confluenceGrade,
       confluenceScore,
       conditionsMetCount,
+      trendAlignmentStatus: (isBuy ? 'BULLISH_ALIGNED' : 'BEARISH_ALIGNED') as TrendAlignmentStatus,
+      isH4DirectorException: false,
+      cascadeStatus: 'CASCADE_ALL_PASSED' as const,
       timestamp: now,
       formattedTime: timeStr,
       tradeTaken: false,
@@ -167,10 +170,16 @@ export function generateClientFallbackSignals(): SMCSignal[] {
       confluences: {
         condition1_HTFTrend: {
           satisfied: true,
-          daily: { timeframe: '1D' as const, bias, structure, emaAlignment: true },
-          fourHour: { timeframe: '4H' as const, bias, structure, emaAlignment: true },
-          thirtyMin: { timeframe: '30M' as const, bias, structure, emaAlignment: true },
-          summary: `Alignement institutionnel HTF ${isBuy ? 'Haussier (Bullish Structure)' : 'Baissier (Bearish Structure)'} (1D + 4H + 30M)`,
+          alignmentStatus: (isBuy ? 'BULLISH_ALIGNED' : 'BEARISH_ALIGNED') as TrendAlignmentStatus,
+          isH4DirectorException: false,
+          isAccumulationBlocked: false,
+          daily: { timeframe: '1D' as const, bias, structure, structureLabel: structure, isAccumulationRange: false, swings: [] },
+          fourHour: { timeframe: '4H' as const, bias, structure, structureLabel: structure, isAccumulationRange: false, swings: [] },
+          thirtyMin: { timeframe: '30M' as const, bias, structure, structureLabel: structure, isAccumulationRange: false, swings: [] },
+          fifteenMin: { timeframe: '15M' as const, bias, structure, structureLabel: structure, isAccumulationRange: false, swings: [] },
+          fiveMin: { timeframe: '5M' as const, bias, structure, structureLabel: structure, isAccumulationRange: false, swings: [] },
+          m15M5RetracementInfo: isBuy ? '🟢 Impulsion / Rejet haussier M15/M5 validé' : '🔴 Impulsion / Rejet baissier M15/M5 validé',
+          summary: `Structure institutionnelle HTF ${isBuy ? 'Haussière (HH/HL)' : 'Baissière (LH/LL)'} (D1 + H4 + M30 alignés)`,
         },
         condition2_FVG_OB: {
           satisfied: true,
