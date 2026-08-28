@@ -20,6 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { AlertHistoryModal } from './components/AlertHistoryModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { FilterControls, SignalViewMode } from './components/FilterControls';
 import { MarketTicker } from './components/MarketTicker';
 import { Navbar } from './components/Navbar';
@@ -482,9 +483,21 @@ export default function App() {
 
   // Save Telegram & Engine Settings
   const handleSaveSettings = async (newSettings: Partial<TelegramSettings>) => {
-    const updated = { ...settings, ...newSettings };
+    const updated: TelegramSettings = {
+      ...DEFAULT_SETTINGS,
+      ...settings,
+      ...newSettings,
+      mutedPairs: newSettings.mutedPairs ?? settings?.mutedPairs ?? {},
+      alertLevels: newSettings.alertLevels ?? settings?.alertLevels ?? ['SNIPER', 'MEDIUM', 'WATCHLIST'],
+      activeCategories: newSettings.activeCategories ?? settings?.activeCategories ?? ['CRYPTO', 'FOREX', 'COMMODITIES', 'SYNTHETICS'],
+      activePairs: newSettings.activePairs ?? settings?.activePairs ?? [],
+      targetTimeframes: newSettings.targetTimeframes ?? settings?.targetTimeframes ?? ['15M', '30M', '1H', '4H', '1D'],
+      fvgTimeframes: newSettings.fvgTimeframes ?? settings?.fvgTimeframes ?? ['15M', '30M'],
+    };
     setSettings(updated);
-    localStorage.setItem('smc_telegram_settings', JSON.stringify(updated));
+    try {
+      localStorage.setItem('smc_telegram_settings', JSON.stringify(updated));
+    } catch {}
     showToast('Paramètres SMC & Telegram enregistrés !', 'success');
 
     try {
@@ -512,11 +525,15 @@ export default function App() {
         body: JSON.stringify({ botToken: cleanToken, chatId: cleanChat }),
       });
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {}
+
+      if (res.ok && data?.success) {
         return { success: true };
       }
-      if (data.error) {
+      if (data?.error) {
         return { success: false, error: data.error };
       }
     } catch (serverErr: any) {
@@ -537,11 +554,15 @@ export default function App() {
         }),
       });
 
-      const tgData = await tgRes.json();
-      if (tgData.ok) {
+      let tgData: any = null;
+      try {
+        tgData = await tgRes.json();
+      } catch {}
+
+      if (tgData?.ok) {
         return { success: true };
       }
-      return { success: false, error: tgData.description || 'Erreur inconnue de Telegram' };
+      return { success: false, error: tgData?.description || 'Erreur lors du contact avec Telegram. Vérifiez le token ou tapez /start sur le bot.' };
     } catch (err: any) {
       return { success: false, error: err.message || 'Impossible de joindre les serveurs Telegram' };
     }
@@ -615,17 +636,18 @@ export default function App() {
   }, [settings.scanIntervalMinutes, settings.lastScanTimestamp]);
 
   // Active signals shown on dashboard:
-  const activeDashboardSignals = signals.filter((s) => {
+  const activeDashboardSignals = (signals || []).filter((s) => {
+    if (!s) return false;
     const now = Date.now();
-    const isMuted = settings.mutedPairs[s.pair] && now < settings.mutedPairs[s.pair];
-    const hasActiveTakenTrade = history.some(
+    const isMuted = Boolean(settings?.mutedPairs?.[s.pair] && now < settings.mutedPairs[s.pair]);
+    const hasActiveTakenTrade = Array.isArray(history) && history.some(
       (h) =>
         (h.pair === s.pair || h.pair === s.symbol) &&
         (h.status === 'TRADE_TAKEN' || h.tradeTakenAt) &&
         !h.tradeClosedAt &&
-        now < (h.tradeTakenAt || h.timestamp) + (settings.antiDuplicateHours || 6) * 3600 * 1000
+        now < (h.tradeTakenAt || h.timestamp) + (settings?.antiDuplicateHours || 6) * 3600 * 1000
     );
-    const isArchived = s.isArchived || archivedSignals.some((a) => a.id === s.id);
+    const isArchived = Boolean(s.isArchived || (Array.isArray(archivedSignals) && archivedSignals.some((a) => a.id === s.id)));
     return !s.tradeTaken && !isMuted && !hasActiveTakenTrade && !isArchived;
   });
 
@@ -633,21 +655,40 @@ export default function App() {
   const sourceSignals = selectedViewMode === 'ARCHIVED' ? archivedSignals : activeDashboardSignals;
 
   // Filter signals according to user dropdowns & search & viewMode
-  const filteredSignals = sourceSignals.filter((s) => {
-    if (selectedViewMode === 'HIGH_PROBABILITY' && s.signalType === 'IFVG_RETEST_CHOCH') {
-      return false;
-    }
-    if (selectedViewMode === 'IFVG' && s.signalType !== 'IFVG_RETEST_CHOCH') {
-      return false;
-    }
-    if (selectedCategory !== 'ALL' && s.category !== selectedCategory) return false;
-    if (selectedGrade !== 'ALL' && s.confluenceGrade !== selectedGrade) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      if (!s.pair.toLowerCase().includes(q) && !s.category.toLowerCase().includes(q)) return false;
-    }
-    return true;
-  });
+  const filteredSignals = (sourceSignals || [])
+    .filter((s) => {
+      if (!s) return false;
+      if (selectedViewMode === 'HIGH_PROBABILITY' && s.signalType === 'IFVG_RETEST_CHOCH') {
+        return false;
+      }
+      if (selectedViewMode === 'IFVG' && s.signalType !== 'IFVG_RETEST_CHOCH') {
+        return false;
+      }
+      if (selectedCategory !== 'ALL' && s.category !== selectedCategory) return false;
+      if (selectedGrade !== 'ALL' && s.confluenceGrade !== selectedGrade) return false;
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        if (!s.pair.toLowerCase().includes(q) && !s.category.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      // 1. Strict Setups Réunis / Confluence Count (Sniper 5/5 > 4/5 > Medium 3/5 > Watchlist 2/5)
+      if (b.conditionsMetCount !== a.conditionsMetCount) {
+        return b.conditionsMetCount - a.conditionsMetCount;
+      }
+      // 2. Confluence Score (98 > 85 > 65)
+      if (b.confluenceScore !== a.confluenceScore) {
+        return b.confluenceScore - a.confluenceScore;
+      }
+      // 3. Clear Path (No obstacle in way of TP)
+      const clA = a.pathObstacleAnalysis?.clearanceScore ?? 100;
+      const clB = b.pathObstacleAnalysis?.clearanceScore ?? 100;
+      if (clB !== clA) return clB - clA;
+      // 4. Market category (Synthetics first if confluences are equal)
+      const catOrder: Record<string, number> = { SYNTHETICS: 1, CRYPTO: 2, COMMODITIES: 3, FOREX: 4 };
+      return (catOrder[a.category] || 99) - (catOrder[b.category] || 99);
+    });
 
   const sniperCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'SNIPER').length;
   const mediumCount = activeDashboardSignals.filter((s) => s.confluenceGrade === 'MEDIUM').length;
@@ -655,25 +696,26 @@ export default function App() {
 
   const highProbCount = activeDashboardSignals.filter((s) => s.signalType !== 'IFVG_RETEST_CHOCH').length;
   const ifvgCount = activeDashboardSignals.filter((s) => s.signalType === 'IFVG_RETEST_CHOCH').length;
-  const archivedCount = archivedSignals.length;
+  const archivedCount = (archivedSignals || []).length;
 
-  const takenTradesCount = history.filter(
+  const takenTradesCount = (history || []).filter(
     (h) => (h.status === 'TRADE_TAKEN' || h.tradeTakenAt) && !h.tradeClosedAt
   ).length;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
-      {/* Top Navigation Bar */}
-      <Navbar
-        settings={settings}
-        isScanning={isScanning}
-        onTriggerScan={handleTriggerScan}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenHistory={() => setIsHistoryOpen(true)}
-        onToggleSound={handleToggleSound}
-        nextScanSeconds={nextScanSeconds}
-        takenTradesCount={takenTradesCount}
-      />
+    <ErrorBoundary>
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200">
+        {/* Top Navigation Bar */}
+        <Navbar
+          settings={settings}
+          isScanning={isScanning}
+          onTriggerScan={handleTriggerScan}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenHistory={() => setIsHistoryOpen(true)}
+          onToggleSound={handleToggleSound}
+          nextScanSeconds={nextScanSeconds}
+          takenTradesCount={takenTradesCount}
+        />
 
       {/* Live Market Ticker */}
       <MarketTicker
@@ -889,16 +931,17 @@ export default function App() {
         onTestTelegram={handleTestTelegram}
       />
 
-      <AlertHistoryModal
-        isOpen={isHistoryOpen}
-        onClose={() => setIsHistoryOpen(false)}
-        history={history}
-        pairs={pairs}
-        onRestoreTrade={handleRestoreTrade}
-        onCloseTrade={handleCloseTrade}
-        onDeleteHistoryItem={handleDeleteHistoryItem}
-        onClearHistory={handleClearHistory}
-      />
-    </div>
+        <AlertHistoryModal
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          history={history}
+          pairs={pairs}
+          onRestoreTrade={handleRestoreTrade}
+          onCloseTrade={handleCloseTrade}
+          onDeleteHistoryItem={handleDeleteHistoryItem}
+          onClearHistory={handleClearHistory}
+        />
+      </div>
+    </ErrorBoundary>
   );
 }

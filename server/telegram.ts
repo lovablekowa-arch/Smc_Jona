@@ -1,5 +1,19 @@
 import { FVGInfo, SMCSignal } from '../src/types';
 
+// Shared rate limiter state across all Telegram calls
+let telegramRateLimitUntil = 0;
+
+export function isTelegramRateLimited(): { isLimited: boolean; retryAfterSeconds: number } {
+  const now = Date.now();
+  if (now < telegramRateLimitUntil) {
+    return {
+      isLimited: true,
+      retryAfterSeconds: Math.ceil((telegramRateLimitUntil - now) / 1000),
+    };
+  }
+  return { isLimited: false, retryAfterSeconds: 0 };
+}
+
 // Normalize Bot Token (strip 'bot' prefix if user pasted 'bot123456:ABC...')
 export function sanitizeBotToken(token: string | undefined | null): string {
   if (!token) return '';
@@ -45,6 +59,11 @@ function stripHtmlTags(html: string): string {
 function translateTelegramError(errorDesc?: string): string {
   if (!errorDesc) return 'Erreur inconnue de l\'API Telegram';
   const lower = errorDesc.toLowerCase();
+  if (lower.includes('too many requests')) {
+    const match = errorDesc.match(/retry after (\d+)/i);
+    const secs = match ? match[1] : '30';
+    return `Limite de requêtes Telegram atteinte. Prochain envoi automatique dans ${secs} secondes.`;
+  }
   if (lower.includes('unauthorized') || lower.includes('invalid token')) {
     return 'Token Bot invalide. Vérifiez le token copié depuis @BotFather.';
   }
@@ -216,11 +235,21 @@ export async function sendTelegramMessage(
     return { success: false, error: 'Token Bot ou Chat ID manquant ou invalide.' };
   }
 
+  // Check rate limit state before hitting Telegram
+  const rateLimit = isTelegramRateLimited();
+  if (rateLimit.isLimited) {
+    console.warn(`[Telegram API] Blocked by active rate limiter. Retry after ${rateLimit.retryAfterSeconds}s.`);
+    return {
+      success: false,
+      error: `Limite Telegram active (429). Prochain envoi possible dans ${rateLimit.retryAfterSeconds}s.`,
+    };
+  }
+
   const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
   console.log(`[Telegram API] Attempting to send message to Chat ID "${cleanChatId}"...`);
 
   try {
-    // 1ère tentative : Envoi en mode HTML formatté
+    // 1ère tentative : Envoi en mode HTML formaté
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -233,34 +262,80 @@ export async function sendTelegramMessage(
       signal: AbortSignal.timeout(10000),
     });
 
-    const data = (await res.json()) as { ok: boolean; description?: string; error_code?: number };
+    const data = (await res.json()) as {
+      ok: boolean;
+      description?: string;
+      error_code?: number;
+      parameters?: { retry_after?: number };
+    };
+
     if (data.ok) {
       console.log(`[Telegram API] Message successfully delivered to ${cleanChatId}`);
       return { success: true };
     }
 
-    console.warn(`[Telegram API] HTML delivery failed (${data.description}), retrying with Plain Text fallback...`);
+    // Check if error is Rate Limit (429 / Too Many Requests)
+    const isRateLimit =
+      res.status === 429 ||
+      data.error_code === 429 ||
+      Boolean(data.description && /too many requests/i.test(data.description));
 
-    // 2ème tentative (Fallback de sécurité garanti) : Envoi en texte brut sans formatage
-    const plainText = stripHtmlTags(htmlText);
-    const retryRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: cleanChatId,
-        text: plainText,
-        disable_web_page_preview: true,
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
+    if (isRateLimit) {
+      let retrySecs = data.parameters?.retry_after;
+      if (!retrySecs && data.description) {
+        const match = data.description.match(/retry after (\d+)/i);
+        if (match) retrySecs = parseInt(match[1], 10);
+      }
+      retrySecs = retrySecs && retrySecs > 0 ? retrySecs : 30;
+      telegramRateLimitUntil = Date.now() + retrySecs * 1000 + 1500; // safety margin
 
-    const retryData = (await retryRes.json()) as { ok: boolean; description?: string };
-    if (retryData.ok) {
-      console.log(`[Telegram API] Fallback plain text successfully delivered to ${cleanChatId}`);
-      return { success: true };
+      const translated = translateTelegramError(data.description);
+      console.warn(`[Telegram API] Rate limit hit for ${cleanChatId}. Cooling down for ${retrySecs}s.`);
+      return { success: false, error: translated };
     }
 
-    const translated = translateTelegramError(retryData.description || data.description);
+    // If it's a formatting error (parse_mode error), fallback to plain text once
+    const isFormattingError =
+      data.description &&
+      /can't parse entities|unsupported start tag|bad formatting|character/i.test(data.description);
+
+    if (isFormattingError) {
+      console.warn(`[Telegram API] HTML formatting failed (${data.description}), retrying with Plain Text fallback...`);
+      const plainText = stripHtmlTags(htmlText);
+      const retryRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: cleanChatId,
+          text: plainText,
+          disable_web_page_preview: true,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const retryData = (await retryRes.json()) as {
+        ok: boolean;
+        description?: string;
+        error_code?: number;
+        parameters?: { retry_after?: number };
+      };
+
+      if (retryData.ok) {
+        console.log(`[Telegram API] Fallback plain text successfully delivered to ${cleanChatId}`);
+        return { success: true };
+      }
+
+      if (retryData.error_code === 429 || (retryData.description && /too many requests/i.test(retryData.description))) {
+        let retrySecs = retryData.parameters?.retry_after || 30;
+        telegramRateLimitUntil = Date.now() + retrySecs * 1000 + 1500;
+      }
+
+      const translated = translateTelegramError(retryData.description || data.description);
+      console.error(`[Telegram API] Error for Chat ID ${cleanChatId}:`, translated);
+      return { success: false, error: translated };
+    }
+
+    const translated = translateTelegramError(data.description);
     console.error(`[Telegram API] Error for Chat ID ${cleanChatId}:`, translated);
     return { success: false, error: translated };
   } catch (err: any) {

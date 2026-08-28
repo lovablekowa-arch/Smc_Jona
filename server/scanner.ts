@@ -2,7 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { AlertHistoryItem, ConfluenceGrade, MarketCategory, SMCSignal, TelegramSettings } from '../src/types';
 import { analyzeAllPairs } from './smcEngine';
-import { formatTelegramFVGTapInMessage, formatTelegramSignalMessage, sanitizeBotToken, sanitizeChatId, sendTelegramMessage } from './telegram';
+import {
+  formatTelegramFVGTapInMessage,
+  formatTelegramSignalMessage,
+  isTelegramRateLimited,
+  sanitizeBotToken,
+  sanitizeChatId,
+  sendTelegramMessage,
+} from './telegram';
 
 // Safe writable paths across container and serverless environments
 const PRIMARY_SETTINGS_FILE = path.join(process.cwd(), 'data_settings.json');
@@ -248,14 +255,30 @@ export async function executeScan(
     `[SMC SCANNER] Found ${signals.length} active opportunities. Telegram alerts enabled: ${hasTelegram} (Bot: ${botToken ? 'YES' : 'NO'}, Chat: ${chatId || 'NONE'})`
   );
 
-  // 3. Process Telegram Alerts
+  // 3. Process Telegram Alerts (Rate-limited, throttled, and prioritized)
+  const MAX_ALERTS_PER_CYCLE = isManual ? 8 : 4;
+
   for (const signal of signals) {
+    if (alertsDispatched >= MAX_ALERTS_PER_CYCLE) {
+      break;
+    }
+
     const isGradeAllowed = currentSettings.alertLevels.includes(signal.confluenceGrade);
     const isCategoryAllowed = currentSettings.activeCategories.includes(signal.category);
     const isMuted = currentSettings.mutedPairs[signal.pair] && now < currentSettings.mutedPairs[signal.pair];
 
-    if (!isGradeAllowed || !isCategoryAllowed) {
+    if (!isGradeAllowed || !isCategoryAllowed || isMuted) {
       continue;
+    }
+
+    // If Telegram rate limiter is currently on cooldown, don't spam Telegram
+    if (hasTelegram) {
+      const rl = isTelegramRateLimited();
+      if (rl.isLimited) {
+        console.warn(`[SMC SCANNER] Telegram cooldown active (${rl.retryAfterSeconds}s remaining). Skipping remaining dispatches for this cycle.`);
+        lastTelegramError = `Cooldown Telegram actif (${rl.retryAfterSeconds}s)`;
+        break;
+      }
     }
 
     // Check anti-duplicate cooldown
@@ -263,12 +286,8 @@ export async function executeScan(
     const cooldownMs = Math.max(1, currentSettings.antiDuplicateHours || 2) * 60 * 60 * 1000;
     const isCooldownActive = now - lastSent < cooldownMs && !isManual;
 
-    if (isMuted) {
-      continue;
-    }
-
     // 3.1 Send standard SMC signal alert
-    if (!isCooldownActive && !isMuted) {
+    if (!isCooldownActive) {
       let telegramSent = false;
       let telegramError: string | undefined;
 
@@ -277,11 +296,18 @@ export async function executeScan(
         const res = await sendTelegramMessage(botToken, chatId, msg);
         telegramSent = res.success;
         telegramError = res.error;
+
         if (telegramSent) {
           lastAlertSentTime[signal.pair] = now;
           alertsDispatched++;
+          // Pacing delay (1.5s) between consecutive Telegram alerts to avoid hitting 429
+          await new Promise((r) => setTimeout(r, 1500));
         } else {
           lastTelegramError = telegramError;
+          // If hit rate limit, stop sending remaining alerts immediately
+          if (isTelegramRateLimited().isLimited) {
+            break;
+          }
         }
       }
 
@@ -314,7 +340,11 @@ export async function executeScan(
     const recentFvg = signal.confluences.condition2_FVG_OB.recentUnmitigatedFVG;
     const shouldNotifyFVGTap = (currentSettings.notifyOnFVGTap ?? true) && recentFvg?.isPriceInsideFVG;
 
-    if (shouldNotifyFVGTap && !isMuted && recentFvg) {
+    if (shouldNotifyFVGTap && recentFvg && alertsDispatched < MAX_ALERTS_PER_CYCLE) {
+      if (hasTelegram && isTelegramRateLimited().isLimited) {
+        break;
+      }
+
       const lastTapSent = lastFVGTapSentTime[signal.pair] || 0;
       const tapCooldownMs = 60 * 60 * 1000; // 1h cooldown
       const isTapCooldownActive = now - lastTapSent < tapCooldownMs && !isManual;
@@ -328,11 +358,17 @@ export async function executeScan(
           const res = await sendTelegramMessage(botToken, chatId, tapMsg);
           telegramSent = res.success;
           telegramError = res.error;
+
           if (telegramSent) {
             lastFVGTapSentTime[signal.pair] = now;
             alertsDispatched++;
+            // Pacing delay (1.5s) between consecutive Telegram alerts
+            await new Promise((r) => setTimeout(r, 1500));
           } else {
             lastTelegramError = telegramError;
+            if (isTelegramRateLimited().isLimited) {
+              break;
+            }
           }
         }
 

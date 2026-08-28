@@ -98,10 +98,10 @@ export const FilterControls: React.FC<FilterControlsProps> = ({
         <div className="flex items-center space-x-1 overflow-x-auto no-scrollbar bg-zinc-900/90 p-1 rounded-xl border border-zinc-800">
           {[
             { id: 'ALL', label: '🌐 Tous les Marchés' },
+            { id: 'SYNTHETICS' as MarketCategory, label: '⚡ Deriv Volatility (Priorité 1)' },
             { id: 'CRYPTO' as MarketCategory, label: '🪙 Crypto (Binance)' },
             { id: 'FOREX' as MarketCategory, label: '💱 Forex Inst.' },
             { id: 'COMMODITIES' as MarketCategory, label: '🥇 Matières (Or/Pétrole)' },
-            { id: 'SYNTHETICS' as MarketCategory, label: '⚡ Deriv Synthetics' },
           ].map((tab) => (
             <button
               key={tab.id}

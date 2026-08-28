@@ -1286,12 +1286,59 @@ export async function analyzeAllPairs(
     targetPairs.map((p) => analyzePairSMC(p.id, minFvgSizePercent, gapFilterStdev, binsCount))
   );
 
-  // Sort signals: 1st SNIPER (4/4), 2nd MEDIUM (3/4), 3rd WATCHLIST (2/4), then by confluenceScore descending
+  // Sort signals:
+  // 1. PRIMARY ABSOLUTE CRITERION: Setups réunis Haute Probabilité (Confluences Met Count: Sniper 5/5, 4/5 avant 3/5, etc.)
+  // 2. Confluence Score descending (98, 95, 90, 85...)
+  // 3. Clear Path to TP (Obstacle Clearance Score: no blocking opposing FVG/OB)
+  // 4. Market category priority when confluence/setup quality is tied (SYNTHETICS/Volatility first, then CRYPTO, FOREX, COMMODITIES)
+  // 5. Volatility 75 / 75 (1s) priority inside Synthetics
+  const categoryRank: Record<string, number> = {
+    SYNTHETICS: 1,
+    CRYPTO: 2,
+    COMMODITIES: 3,
+    FOREX: 4,
+  };
+
   signals.sort((a, b) => {
+    // 1st: Number of SMC conditions strictly validated (5/5 > 4/5 > 3/5 > 2/5)
     if (b.conditionsMetCount !== a.conditionsMetCount) {
       return b.conditionsMetCount - a.conditionsMetCount;
     }
-    return b.confluenceScore - a.confluenceScore;
+
+    // 2nd: Confluence Quality Score (e.g. 98% vs 85%)
+    if (b.confluenceScore !== a.confluenceScore) {
+      return b.confluenceScore - a.confluenceScore;
+    }
+
+    // 3rd: Signal Type (High Probability Trend first before counter-trend IFVG)
+    if (a.signalType !== b.signalType) {
+      if (a.signalType === 'HIGH_PROBABILITY_TREND') return -1;
+      if (b.signalType === 'HIGH_PROBABILITY_TREND') return 1;
+    }
+
+    // 4th: Obstacle clearance score (clean path to TP without opposing walls)
+    const clearanceA = a.pathObstacleAnalysis?.clearanceScore ?? 100;
+    const clearanceB = b.pathObstacleAnalysis?.clearanceScore ?? 100;
+    if (clearanceB !== clearanceA) {
+      return clearanceB - clearanceA;
+    }
+
+    // 5th: Market Category ranking (Volatility / Synthetics, then Crypto, etc.)
+    const rankA = categoryRank[a.category] || 99;
+    const rankB = categoryRank[b.category] || 99;
+    if (rankA !== rankB) {
+      return rankA - rankB;
+    }
+
+    // 6th: Volatility 75 / 75 (1s) preference within Synthetics
+    if (a.category === 'SYNTHETICS' && b.category === 'SYNTHETICS') {
+      const isV75A = a.symbol === 'V75' || a.symbol === 'V75_1S' || a.pair.includes('75');
+      const isV75B = b.symbol === 'V75' || b.symbol === 'V75_1S' || b.pair.includes('75');
+      if (isV75A && !isV75B) return -1;
+      if (!isV75A && isV75B) return 1;
+    }
+
+    return 0;
   });
 
   return signals;

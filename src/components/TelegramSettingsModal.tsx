@@ -100,13 +100,16 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
     setTestResult(null);
     try {
       const res = await onTestTelegram(cleanToken, cleanChat);
-      if (res.success) {
+      if (res && res.success) {
         setTestResult({ success: true, message: 'Message test envoyé avec succès sur votre Telegram ! Vérifiez votre smartphone.' });
       } else {
-        setTestResult({ success: false, message: res.error || 'Échec de l\'envoi du message test.' });
+        setTestResult({
+          success: false,
+          message: (res && res.error) || 'Échec de l\'envoi. Avez-vous cliqué sur /start dans Telegram avec votre Bot ?',
+        });
       }
     } catch (err: any) {
-      setTestResult({ success: false, message: err.message || 'Erreur inattendue' });
+      setTestResult({ success: false, message: err?.message || 'Erreur lors du test' });
     } finally {
       setTesting(false);
     }
@@ -121,20 +124,23 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
         botToken: cleanToken,
         chatId: cleanChat,
         enabled,
-        alertLevels,
-        activeCategories,
-        activePairs,
-        targetTimeframes,
+        alertLevels: alertLevels || ['SNIPER', 'MEDIUM', 'WATCHLIST'],
+        activeCategories: activeCategories || ['CRYPTO', 'FOREX', 'COMMODITIES', 'SYNTHETICS'],
+        activePairs: activePairs || [],
+        targetTimeframes: targetTimeframes || ['15M', '30M', '1H', '4H', '1D'],
         minFvgSizePercent: Number(minFvgSizePercent) || 0.15,
         fvgGapFilterStdev: Number(fvgGapFilterStdev) || 0.5,
         fvgVolumeProfileBins: Number(fvgVolumeProfileBins) || 15,
-        notifyOnFVGTap,
-        showIFVG,
-        fvgTimeframes,
-        antiDuplicateHours,
-        scanIntervalMinutes,
-        soundEnabled,
+        notifyOnFVGTap: Boolean(notifyOnFVGTap),
+        showIFVG: Boolean(showIFVG),
+        fvgTimeframes: fvgTimeframes || ['15M', '30M'],
+        antiDuplicateHours: Number(antiDuplicateHours) || 6,
+        scanIntervalMinutes: Number(scanIntervalMinutes) || 10,
+        soundEnabled: Boolean(soundEnabled),
       });
+      onClose();
+    } catch (err: any) {
+      console.error('Save settings error:', err);
       onClose();
     } finally {
       setSaving(false);
@@ -306,10 +312,10 @@ export const TelegramSettingsModal: React.FC<TelegramSettingsModalProps> = ({
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
+                  { id: 'SYNTHETICS' as MarketCategory, label: '⚡ Synthetics', sub: 'Deriv Volatility (P1)' },
                   { id: 'CRYPTO' as MarketCategory, label: '🪙 Crypto', sub: 'Binance Direct' },
                   { id: 'FOREX' as MarketCategory, label: '💱 Forex', sub: 'Institutionnel' },
                   { id: 'COMMODITIES' as MarketCategory, label: '🥇 Matières', sub: 'Or, Argent, Pétrole' },
-                  { id: 'SYNTHETICS' as MarketCategory, label: '⚡ Synthetics', sub: 'Deriv Volatility' },
                 ].map((cat) => {
                   const active = activeCategories.includes(cat.id);
                   return (
