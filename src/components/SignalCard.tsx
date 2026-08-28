@@ -403,7 +403,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({
               </div>
             </div>
 
-            {/* Condition 2: FVG & OB (Recent vs Ancient Mitigated) & IFVG with ChartPrime Volume Profile */}
+            {/* Condition 2: Suite FVG M30 & M15 (Alignement Strict Obligatoire) + Confirmation d'Entrée M15/M30 + Macro H4/Daily Informatifs */}
             <div
               className={`p-2.5 rounded-lg border flex items-start space-x-2 ${
                 c2.satisfied
@@ -417,34 +417,81 @@ export const SignalCard: React.FC<SignalCardProps> = ({
                 }`}
               />
               <div className="w-full">
-                <div className="font-semibold text-zinc-200 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <span>2. FVG (15M / 30M) & Volume POC</span>
+                <div className="font-semibold text-zinc-200 flex items-center justify-between flex-wrap gap-1">
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <span>2. Suite FVG (M30 &amp; M15) &amp; Entrée</span>
+                    {c2.fvgSequenceM30M15Confirmed && (
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-900/80 text-emerald-200 border border-emerald-500/40 font-mono font-bold tracking-tight">
+                        SUITE M30+M15 VALIDÉE ✅
+                      </span>
+                    )}
                     {c2.recentUnmitigatedFVG?.highProbability && (
                       <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950/90 text-amber-300 border border-amber-500/40 font-mono font-bold tracking-tight">
                         HAUTE PROBABILITÉ ⭐
                       </span>
                     )}
                   </span>
-                  {c2.recentUnmitigatedFVG && (
-                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-950/80 text-sky-300 border border-sky-500/30 font-mono">
-                      {c2.recentUnmitigatedFVG.timeframe} • {c2.recentUnmitigatedFVG.sizePercent}%
-                    </span>
-                  )}
+
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-950/80 text-sky-300 border border-sky-500/30 font-mono">
+                    Entrée: {c2.entryConfirmationTimeframe || '15M'}
+                  </span>
                 </div>
-                <div className="text-[11px] space-y-1 mt-1">
-                  {c2.recentUnmitigatedFVG && (
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-emerald-400 font-medium">
-                        <span>
-                          • <strong className="text-emerald-300">FVG {c2.recentUnmitigatedFVG.timeframe}</strong> Récent ({c2.recentUnmitigatedFVG.ageHours}h) NON MITIGÉ
-                        </span>
-                        {c2.recentUnmitigatedFVG.pocPrice && (
-                          <span className="text-[10px] px-1 rounded bg-amber-950/80 text-amber-300 border border-amber-500/30 font-mono">
-                            POC: {c2.recentUnmitigatedFVG.pocPrice}
+
+                <div className="text-[11px] space-y-1.5 mt-1.5">
+                  {/* FVG M30 & M15 Sequence details */}
+                  <div className="grid grid-cols-1 gap-1">
+                    {c2.fvgM30 && (
+                      <div className="flex items-center justify-between bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-zinc-300">
+                        <span className="flex items-center gap-1">
+                          <strong className="text-sky-400 font-mono">FVG M30 (Structure) :</strong>
+                          <span className="text-zinc-300">
+                            {c2.fvgM30.low > 500 ? c2.fvgM30.low.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgM30.low.toFixed(4)} — {c2.fvgM30.high > 500 ? c2.fvgM30.high.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgM30.high.toFixed(4)}
                           </span>
-                        )}
+                        </span>
+                        <span className="text-[10px] text-zinc-400 font-mono">
+                          {c2.fvgM30.sizePercent}% ({c2.fvgM30.ageHours}h)
+                        </span>
                       </div>
+                    )}
+
+                    {c2.fvgM15 && (
+                      <div className="flex items-center justify-between bg-emerald-950/40 px-2 py-1 rounded border border-emerald-500/30 text-emerald-200">
+                        <span className="flex items-center gap-1">
+                          <strong className="text-emerald-300 font-mono">FVG M15 (Zone d'Entrée &amp; POC) :</strong>
+                          <span className="text-emerald-100">
+                            {c2.fvgM15.low > 500 ? c2.fvgM15.low.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgM15.low.toFixed(4)} — {c2.fvgM15.high > 500 ? c2.fvgM15.high.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.fvgM15.high.toFixed(4)}
+                          </span>
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {c2.fvgM15.pocPrice && (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-500/30 font-mono">
+                              POC: {c2.fvgM15.pocPrice}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-emerald-300 font-mono">
+                            {c2.fvgM15.sizePercent}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Informative Macro FVGs (H4 and Daily) */}
+                  {(c2.macroFvgH4 || c2.macroFvgDaily || c2.macroFvgInformativeSummary) && (
+                    <div className="p-1.5 rounded bg-zinc-950/80 border border-purple-500/20 text-[10px] text-purple-200/90 leading-tight">
+                      <span className="font-semibold text-purple-300">💡 Confluence Macro (Informatif) : </span>
+                      {c2.macroFvgH4 && (
+                        <span>
+                          FVG H4 ({c2.macroFvgH4.low > 500 ? c2.macroFvgH4.low.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.macroFvgH4.low.toFixed(4)} - {c2.macroFvgH4.high > 500 ? c2.macroFvgH4.high.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.macroFvgH4.high.toFixed(4)})
+                        </span>
+                      )}
+                      {c2.macroFvgH4 && c2.macroFvgDaily && <span> + </span>}
+                      {c2.macroFvgDaily && (
+                        <span>
+                          FVG Daily 1D ({c2.macroFvgDaily.low > 500 ? c2.macroFvgDaily.low.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.macroFvgDaily.low.toFixed(4)} - {c2.macroFvgDaily.high > 500 ? c2.macroFvgDaily.high.toLocaleString('en-US', { minimumFractionDigits: 1 }) : c2.macroFvgDaily.high.toFixed(4)})
+                        </span>
+                      )}
+                      <span className="text-zinc-400"> — renforcent le flux institutionnel global.</span>
                     </div>
                   )}
 

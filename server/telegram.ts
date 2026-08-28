@@ -105,20 +105,29 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const c4 = signal.confluences.condition4_LiquiditySweep;
   const c5 = signal.confluences.condition5_RSI10;
 
-  const fvgRecent = c2.recentUnmitigatedFVG;
-  const fvgRecentText = fvgRecent
-    ? `• FVG ${fvgRecent.timeframe} Récent (${fvgRecent.ageHours}h): NON MITIGÉ (Taille: ${fvgRecent.sizePercent}% | POC: ${fvgRecent.pocPrice || 'N/A'}${fvgRecent.stdevRatio ? ` | σ: ${fvgRecent.stdevRatio}` : ''}) ${fvgRecent.highProbability ? '⭐ [Haute Probabilité]' : '✅'}`
-    : '• FVG Récent: Non détecté';
+  const fvgM30 = c2.fvgM30;
+  const fvgM15 = c2.fvgM15;
+  const fvgM30Text = fvgM30
+    ? `• <b>FVG M30 (Structure) :</b> <code>${fvgM30.low > 500 ? fvgM30.low.toFixed(1) : fvgM30.low.toFixed(4)} — ${fvgM30.high > 500 ? fvgM30.high.toFixed(1) : fvgM30.high.toFixed(4)}</code> (${fvgM30.sizePercent}%, ${fvgM30.ageHours}h)`
+    : '';
+
+  const fvgM15Text = fvgM15
+    ? `• <b>FVG M15 (Zone d'Entrée &amp; POC) :</b> <code>${fvgM15.low > 500 ? fvgM15.low.toFixed(1) : fvgM15.low.toFixed(4)} — ${fvgM15.high > 500 ? fvgM15.high.toFixed(1) : fvgM15.high.toFixed(4)}</code> (POC: <code>${fvgM15.pocPrice || 'N/A'}</code>) ⭐`
+    : '';
+
+  const macroFvgText = c2.macroFvgInformativeSummary
+    ? `• <i>${escapeHtml(c2.macroFvgInformativeSummary)}</i>`
+    : '';
 
   const ifvg = c2.inversionFVG;
   const ifvgText = ifvg
-    ? `• IFVG ${ifvg.timeframe} Inversé (${ifvg.role === 'INVERTED_SUPPORT' ? 'Support 🟢' : 'Résistance 🔴'}): ${ifvg.sizePercent}% (${ifvg.retested ? 'Retesté' : 'Actif'}) 🔄`
-    : '• IFVG: Non actif';
+    ? `• <b>IFVG ${ifvg.timeframe} Inversé (${ifvg.role === 'INVERTED_SUPPORT' ? 'Support 🟢' : 'Résistance 🔴'}) :</b> ${ifvg.sizePercent}% (${ifvg.retested ? 'Retesté' : 'Actif'}) 🔄`
+    : '';
 
   const fvgAncient = c2.ancientMitigatedFVG;
   const fvgAncientText = fvgAncient
-    ? `• FVG ${fvgAncient.timeframe} Ancien (${fvgAncient.ageHours}h): DÉJÀ MITIGÉ (100% comblé - ${fvgAncient.sizePercent}%) ⏳`
-    : '• FVG Ancien: Aucun résiduel';
+    ? `• FVG ${fvgAncient.timeframe} Ancien (${fvgAncient.ageHours}h): DÉJÀ MITIGÉ (100% comblé) ⏳`
+    : '';
 
   const retracementText = c3?.retracementConfirmation
     ? `\n   🔥 <i>${escapeHtml(c3.retracementConfirmation.candleDescription)}</i>`
@@ -164,10 +173,8 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
 🔍 <b>ANALYSE DES 5 CONFLUENCES :</b>
 1️⃣ <b>Tendance HTF (1D / 4H / 30M):</b> ${c1.satisfied ? '✅ VALIDÉ' : '⚠️ PARTIEL'}
    <i>${escapeHtml(c1.summary)}</i>
-2️⃣ <b>FVG &amp; IFVG Inversé:</b> ${c2.satisfied ? '✅ VALIDÉ' : '⚠️ EN ATTENTE'}
-   <i>${escapeHtml(fvgRecentText)}</i>
-   <i>${escapeHtml(ifvgText)}</i>
-   <i>${escapeHtml(fvgAncientText)}</i>
+2️⃣ <b>Suite FVG M30 &amp; M15 (Alignement Obligatoire) :</b> ${c2.satisfied ? '✅ VALIDÉ' : '⚠️ EN ATTENTE'}
+${fvgM30Text ? `   ${fvgM30Text}\n` : ''}${fvgM15Text ? `   ${fvgM15Text}\n` : ''}${macroFvgText ? `   ${macroFvgText}\n` : ''}${ifvgText ? `   ${ifvgText}\n` : ''}${fvgAncientText ? `   ${fvgAncientText}` : ''}
 3️⃣ <b>Fibonacci &amp; Bougie Confirmation:</b> ${c3.satisfied ? '✅ VALIDÉ' : '⚠️ NEUTRE'}
    <i>${escapeHtml(c3.summary)}</i>${retracementText}
 4️⃣ <b>Balayage Liquidité Sweep 💧:</b> ${c4.satisfied ? '✅ VALIDÉ' : '⚠️ FORMATION'}

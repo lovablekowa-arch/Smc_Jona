@@ -77,7 +77,7 @@ export interface FVGInfo {
 export interface IFVGInfo {
   type: 'BULLISH' | 'BEARISH'; // Current inverted bias (e.g. BULLISH if acting as support)
   originalType: 'BULLISH' | 'BEARISH';
-  timeframe: '15M' | '30M' | '1H' | '4H';
+  timeframe: '15M' | '30M' | '1H' | '4H' | '1D';
   high: number;
   low: number;
   sizePercent: number;
@@ -131,9 +131,22 @@ export interface SMCConfluenceDetails {
     thirtyMin: TimeframeTrend;
     summary: string;
   };
-  // Condition 2: FVG & OB (Recent vs Ancient Mitigated) & IFVG
+  // Condition 2: FVG Suite M30 & M15 (Suite obligatoire pour confirmation d'entrée en M15/M30 + FVG H4 et Daily informatifs)
   condition2_FVG_OB: {
     satisfied: boolean;
+    // Suite prioritaire M30 & M15 (Respect strict de l'alignement M30 + M15)
+    fvgSequenceM30M15Confirmed: boolean;
+    fvgM30?: FVGInfo; // FVG M30 (Structure intermédiaire)
+    fvgM15?: FVGInfo; // FVG M15 (Zone de précision d'entrée / POC)
+    entryConfirmationTimeframe: '15M' | '30M'; // Timeframe où la confirmation d'entrée a lieu (M15 ou M30)
+    entryTapInStatus?: 'CONFIRMED_INSIDE' | 'TESTING_POC' | 'APPROACHING' | 'REJECTING_POC';
+
+    // Confluences Macro Informatives (H4 et Daily)
+    macroFvgH4?: FVGInfo; // FVG H4 informatif pour confirmation macro
+    macroFvgDaily?: FVGInfo; // FVG 1D informatif pour confirmation macro
+    macroFvgInformativeSummary?: string;
+
+    // Backward-compatible fields
     recentUnmitigatedFVG?: FVGInfo;
     ancientMitigatedFVG?: FVGInfo;
     inversionFVG?: IFVGInfo; // Inversion Fair Value Gap
