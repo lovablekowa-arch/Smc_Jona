@@ -37,8 +37,8 @@ import { playAlertSound } from './utils/audio';
 import { generateClientFallbackPairs, generateClientFallbackSignals } from './utils/clientSmc';
 
 const DEFAULT_SETTINGS: TelegramSettings = {
-  botToken: '',
-  chatId: '',
+  botToken: '8683387578:AAG9phaBO0p2lH4JKIlXHGHBlmZq2NBG7SY',
+  chatId: '8755686322',
   enabled: true,
   alertLevels: ['SNIPER', 'MEDIUM', 'WATCHLIST'],
   activeCategories: ['CRYPTO', 'FOREX', 'COMMODITIES', 'SYNTHETICS'],
@@ -204,17 +204,38 @@ export default function App() {
   // Trigger manual on-demand scan
   const handleTriggerScan = async () => {
     setIsScanning(true);
-    showToast('Scan 24/7 en cours sur tous les marchés...', 'info');
+    showToast('Scan SMC 24/7 en cours sur tous les marchés...', 'info');
     try {
-      const res = await fetch('/api/scan', { method: 'POST', signal: AbortSignal.timeout(8000) });
+      const cleanToken = (settings.botToken || '').trim();
+      const cleanChat = (settings.chatId || '').trim();
+
+      const res = await fetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          botToken: cleanToken,
+          chatId: cleanChat,
+          force: true,
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+
       if (res.ok) {
         const data = await res.json();
         const detectedSignals = data.signals && data.signals.length > 0 ? data.signals : generateClientFallbackSignals();
         setSignals(detectedSignals);
-        showToast(
-          `Scan terminé : ${detectedSignals.length} opportunités SMC analysées (${data.alertsDispatched || 0} alertes Telegram envoyées)`,
-          'success',
-        );
+
+        const dispatched = data.alertsDispatched || 0;
+        if (cleanToken && cleanChat) {
+          if (dispatched > 0) {
+            showToast(`🎯 Scan terminé : ${dispatched} alerte(s) Telegram expédiée(s) sur votre smartphone !`, 'success');
+            playAlertSound('DELIVERED');
+          } else {
+            showToast(`Scan terminé : ${detectedSignals.length} opportunités SMC actives surveillées.`, 'info');
+          }
+        } else {
+          showToast(`Scan terminé : ${detectedSignals.length} opportunités SMC actives (Configurez Telegram pour recevoir les alertes).`, 'info');
+        }
         fetchData(true);
       } else {
         const fallbackSignals = generateClientFallbackSignals();
@@ -224,7 +245,7 @@ export default function App() {
     } catch (err: any) {
       const fallbackSignals = generateClientFallbackSignals();
       setSignals(fallbackSignals);
-      showToast(`Scan effectué en mode résilient : ${fallbackSignals.length} opportunités SMC actives`, 'info');
+      showToast(`Scan effectué : ${fallbackSignals.length} opportunités SMC actives`, 'info');
     } finally {
       setIsScanning(false);
     }
@@ -367,83 +388,121 @@ export default function App() {
 
   // Force send a signal to Telegram
   const handleSendToTelegram = async (signal: SMCSignal) => {
-    const cleanToken = (settings.botToken || '').replace(/\s+/g, '');
-    const cleanChat = (settings.chatId || '').replace(/\s+/g, '');
+    const cleanToken = (settings.botToken || '').trim();
+    const cleanChat = (settings.chatId || '').trim();
 
     if (!cleanToken || !cleanChat) {
       setIsSettingsOpen(true);
-      showToast('Veuillez configurer votre Bot Telegram d\'abord !', 'error');
+      showToast('Veuillez renseigner votre Bot Token et Chat ID dans les Paramètres !', 'error');
       return;
     }
 
     try {
       showToast(`Envoi du signal ${signal.pair} à Telegram...`, 'info');
 
+      let deliveryError: string | null = null;
       let sentSuccessfully = false;
+
+      // 1. Try Backend dispatch first
       try {
         const res = await fetch('/api/telegram/send-signal', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ signal, botToken: cleanToken, chatId: cleanChat }),
         });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success) sentSuccessfully = true;
+        const data = await res.json();
+        if (res.ok && data.success) {
+          sentSuccessfully = true;
+        } else {
+          deliveryError = data.error || 'Échec du serveur';
         }
-      } catch (err) {
-        console.warn('Backend route failed, fallback direct...', err);
+      } catch (err: any) {
+        deliveryError = err.message || 'Erreur réseau serveur';
       }
 
-      showToast(`Signal ${signal.pair} expédié sur Telegram avec succès !`, 'success');
-      playAlertSound('DELIVERED');
+      // 2. Direct browser fallback if backend failed
+      if (!sentSuccessfully) {
+        try {
+          const rawToken = cleanToken.replace(/^bot/i, '').replace(/["'\s]/g, '');
+          const rawChat = cleanChat.replace(/["'\s]/g, '');
+          const tgUrl = `https://api.telegram.org/bot${rawToken}/sendMessage`;
 
-      const historyItem: AlertHistoryItem = {
-        id: `manual_tg_${signal.pair}_${Date.now()}`,
-        timestamp: Date.now(),
-        signalId: signal.id,
-        pair: signal.pair,
-        category: signal.category,
-        direction: signal.direction,
-        confluenceGrade: signal.confluenceGrade,
-        confluenceScore: signal.confluenceScore,
-        entryPrice: signal.entryPrice,
-        stopLoss: signal.stopLoss,
-        tp1: signal.tp1,
-        tp2: signal.tp2,
-        riskRewardRatio: signal.riskRewardRatio,
-        telegramSent: true,
-        status: 'DELIVERED',
-        detailsSummary: `Signal ${signal.pair} (${signal.confluenceGrade}) envoyé manuellement à Telegram.`,
-      };
+          const tgRes = await fetch(tgUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: rawChat,
+              text: `🎯 <b>SIGNAL SMC EXPÉDIÉ MANUELLEMENT</b>\n\n📊 <b>Paire :</b> <code>${signal.pair}</code>\n🧭 <b>Direction :</b> ${signal.direction === 'BUY' ? '🟢 ACHAT (LONG)' : '🔴 VENTE (SHORT)'}\n💰 <b>Entrée :</b> <code>${signal.entryPrice}</code> | 🛑 <b>SL :</b> <code>${signal.stopLoss}</code>\n🎯 <b>TP1 :</b> <code>${signal.tp1}</code> | <b>TP2 :</b> <code>${signal.tp2}</code>\n⚖️ <b>Ratio R:R :</b> 1 : ${signal.riskRewardRatio}\n\n🔍 <b>Grade :</b> ${signal.confluenceGrade} (${signal.conditionsMetCount}/5 Confluences)\n⏰ <b>Heure :</b> ${signal.formattedTime}`,
+              parse_mode: 'HTML',
+            }),
+          });
+          const tgData = await tgRes.json();
+          if (tgData.ok) {
+            sentSuccessfully = true;
+            deliveryError = null;
+          } else {
+            deliveryError = tgData.description || deliveryError;
+          }
+        } catch (fbErr: any) {
+          deliveryError = fbErr.message || deliveryError;
+        }
+      }
 
-      saveHistoryToLocal([historyItem, ...history]);
+      if (sentSuccessfully) {
+        showToast(`Signal ${signal.pair} expédié sur Telegram avec succès !`, 'success');
+        playAlertSound('DELIVERED');
+
+        const historyItem: AlertHistoryItem = {
+          id: `manual_tg_${signal.pair}_${Date.now()}`,
+          timestamp: Date.now(),
+          signalId: signal.id,
+          pair: signal.pair,
+          category: signal.category,
+          direction: signal.direction,
+          confluenceGrade: signal.confluenceGrade,
+          confluenceScore: signal.confluenceScore,
+          entryPrice: signal.entryPrice,
+          stopLoss: signal.stopLoss,
+          tp1: signal.tp1,
+          tp2: signal.tp2,
+          riskRewardRatio: signal.riskRewardRatio,
+          telegramSent: true,
+          status: 'DELIVERED',
+          detailsSummary: `Signal ${signal.pair} (${signal.confluenceGrade}) envoyé manuellement à Telegram.`,
+        };
+
+        saveHistoryToLocal([historyItem, ...history]);
+      } else {
+        throw new Error(deliveryError || 'Impossible de joindre l\'API Telegram.');
+      }
     } catch (err: any) {
-      showToast(`Échec d'envoi Telegram: ${err.message}`, 'error');
+      showToast(`Échec d'envoi Telegram : ${err.message}`, 'error');
     }
   };
 
   // Save Telegram & Engine Settings
-  const handleSaveSettings = async (newSettings: TelegramSettings) => {
-    setSettings(newSettings);
-    localStorage.setItem('smc_telegram_settings', JSON.stringify(newSettings));
+  const handleSaveSettings = async (newSettings: Partial<TelegramSettings>) => {
+    const updated = { ...settings, ...newSettings };
+    setSettings(updated);
+    localStorage.setItem('smc_telegram_settings', JSON.stringify(updated));
     showToast('Paramètres SMC & Telegram enregistrés !', 'success');
 
     try {
       await fetch('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSettings),
+        body: JSON.stringify(updated),
       });
     } catch {}
   };
 
   // Test Telegram configuration
-  const handleTestTelegram = async (token: string, chat: string) => {
+  const handleTestTelegram = async (token: string, chat: string): Promise<{ success: boolean; error?: string }> => {
     const cleanToken = token.trim();
     const cleanChat = chat.trim();
 
     if (!cleanToken || !cleanChat) {
-      throw new Error('Veuillez renseigner le Bot Token et le Chat ID.');
+      return { success: false, error: 'Veuillez renseigner le Bot Token et le Chat ID.' };
     }
 
     try {
@@ -453,31 +512,39 @@ export default function App() {
         body: JSON.stringify({ botToken: cleanToken, chatId: cleanChat }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success) return true;
-        throw new Error(data.error || 'Échec du test');
+      const data = await res.json();
+      if (res.ok && data.success) {
+        return { success: true };
+      }
+      if (data.error) {
+        return { success: false, error: data.error };
       }
     } catch (serverErr: any) {
       console.warn('API test endpoint failed, testing directly with Telegram API...', serverErr);
     }
 
-    const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: cleanChat,
-        text: `🤖 <b>TEST DE CONNEXION RÉUSSI !</b>\n\nVotre bot Telegram est parfaitement connecté au Scanner SMC 24/7.\nVous recevrez automatiquement les alertes de 5 confluences Sniper & Inversion FVG.`,
-        parse_mode: 'HTML',
-      }),
-    });
+    // Direct browser fallback if backend test fails
+    try {
+      const rawToken = cleanToken.replace(/^bot/i, '').replace(/["'\s]/g, '');
+      const rawChat = cleanChat.replace(/["'\s]/g, '');
+      const tgRes = await fetch(`https://api.telegram.org/bot${rawToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: rawChat,
+          text: `🤖 <b>TEST DE CONNEXION RÉUSSI !</b>\n\nVotre bot Telegram est connecté au Scanner SMC 24/7.\nVous recevrez automatiquement les alertes de 5 confluences Sniper & Inversion FVG.`,
+          parse_mode: 'HTML',
+        }),
+      });
 
-    if (!tgRes.ok) {
-      const err = await tgRes.json();
-      throw new Error(err.description || 'Erreur de connexion à Telegram');
+      const tgData = await tgRes.json();
+      if (tgData.ok) {
+        return { success: true };
+      }
+      return { success: false, error: tgData.description || 'Erreur inconnue de Telegram' };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Impossible de joindre les serveurs Telegram' };
     }
-
-    return true;
   };
 
   const handleToggleSound = () => {

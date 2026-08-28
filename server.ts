@@ -9,10 +9,10 @@ import {
   getSettings,
   muteTradePair,
   startBackgroundScanner,
+  unmuteTradePair,
   updateSettings,
 } from './server/scanner';
-import { analyzePairSMC } from './server/smcEngine';
-import { formatTelegramSignalMessage, sendTelegramMessage, sendTelegramTestAlert } from './server/telegram';
+import { formatTelegramSignalMessage, sanitizeBotToken, sanitizeChatId, sendTelegramMessage, sendTelegramTestAlert } from './server/telegram';
 
 async function startServer() {
   const app = express();
@@ -23,14 +23,41 @@ async function startServer() {
   // Start background 24/7 SMC Scanner
   startBackgroundScanner();
 
-  // API Routes
+  // Health check & bot status
   app.get('/api/health', (req, res) => {
+    const s = getSettings();
     res.json({
       status: 'ok',
-      engine: 'SMC 5-Confluences & Liquidity Scanner',
+      engine: 'SMC 5-Confluences & Liquidity Scanner 24/7',
+      telegramConfigured: Boolean(s.botToken && s.chatId),
+      telegramEnabled: s.enabled !== false,
       timestamp: Date.now(),
     });
   });
+
+  // Cron Trigger Endpoint (Accessible via GET or POST for any cron-job service / curl / uptime monitor)
+  const handleCronOrScan = async (req: express.Request, res: express.Response) => {
+    try {
+      const customToken = req.body?.botToken || (req.query?.botToken as string);
+      const customChatId = req.body?.chatId || (req.query?.chatId as string);
+      const force = req.body?.force === true || req.query?.force === 'true';
+
+      const result = await executeScan(true, customToken, customChatId);
+      res.json({
+        success: true,
+        message: `Scan exécuté avec succès. ${result.signals.length} signaux analysés, ${result.alertsDispatched} alerte(s) Telegram expédiée(s).`,
+        ...result,
+      });
+    } catch (err: any) {
+      console.error('[API /api/cron or /api/scan error]:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  };
+
+  app.get('/api/cron', handleCronOrScan);
+  app.post('/api/cron', handleCronOrScan);
+  app.get('/api/scan', handleCronOrScan);
+  app.post('/api/scan', handleCronOrScan);
 
   // Get live pairs
   app.get('/api/pairs', async (req, res) => {
@@ -57,16 +84,6 @@ async function startServer() {
     }
   });
 
-  // Trigger manual on-demand scan
-  app.post('/api/scan', async (req, res) => {
-    try {
-      const result = await executeScan(true);
-      res.json(result);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
   // Get current settings
   app.get('/api/settings', (req, res) => {
     try {
@@ -90,8 +107,21 @@ async function startServer() {
   // Test Telegram credentials
   app.post('/api/telegram/test', async (req, res) => {
     try {
-      const { botToken, chatId } = req.body;
+      const botToken = sanitizeBotToken(req.body.botToken || getSettings().botToken);
+      const chatId = sanitizeChatId(req.body.chatId || getSettings().chatId);
+
+      if (!botToken || !chatId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Veuillez saisir votre Token Bot et Chat ID pour tester la connexion.',
+        });
+      }
+
       const result = await sendTelegramTestAlert(botToken, chatId);
+      if (result.success) {
+        // Update valid credentials automatically in settings
+        updateSettings({ botToken, chatId, enabled: true });
+      }
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -101,18 +131,26 @@ async function startServer() {
   // Send a specific signal to Telegram manually
   app.post('/api/telegram/send-signal', async (req, res) => {
     try {
-      const { signal, botToken, chatId } = req.body;
-      const token = botToken || getSettings().botToken;
-      const chat = chatId || getSettings().chatId;
+      const { signal, botToken: bodyToken, chatId: bodyChat } = req.body;
+      const token = sanitizeBotToken(bodyToken || getSettings().botToken);
+      const chat = sanitizeChatId(bodyChat || getSettings().chatId);
 
       if (!token || !chat) {
-        return res.status(400).json({ success: false, error: 'Token Bot ou Chat ID manquant' });
+        return res.status(400).json({
+          success: false,
+          error: 'Token Bot ou Chat ID manquant. Veuillez configurer vos identifiants dans les Paramètres.',
+        });
+      }
+
+      if (!signal) {
+        return res.status(400).json({ success: false, error: 'Données du signal manquantes.' });
       }
 
       const msg = formatTelegramSignalMessage(signal);
       const result = await sendTelegramMessage(token, chat, msg);
       res.json(result);
     } catch (err: any) {
+      console.error('[API /api/telegram/send-signal error]:', err);
       res.status(500).json({ success: false, error: err.message });
     }
   });
@@ -120,8 +158,19 @@ async function startServer() {
   // Mark trade taken (mute pair for 6h)
   app.post('/api/take-trade', (req, res) => {
     try {
-      const { pairSymbol, hours } = req.body;
-      const result = muteTradePair(pairSymbol, hours || 6);
+      const { pairSymbol, hours, signal } = req.body;
+      const result = muteTradePair(pairSymbol, hours || 6, signal);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Unmute trade pair
+  app.post('/api/unmute-pair', (req, res) => {
+    try {
+      const { pairSymbol } = req.body;
+      const result = unmuteTradePair(pairSymbol);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

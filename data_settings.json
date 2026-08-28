@@ -1,6 +1,6 @@
 {
-  "botToken": "",
-  "chatId": "",
+  "botToken": "8683387578:AAG9phaBO0p2lH4JKIlXHGHBlmZq2NBG7SY",
+  "chatId": "8755686322",
   "enabled": true,
   "alertLevels": [
     "SNIPER",
@@ -30,9 +30,9 @@
     "15M",
     "30M"
   ],
-  "antiDuplicateHours": 6,
-  "scanIntervalMinutes": 10,
+  "antiDuplicateHours": 2,
+  "scanIntervalMinutes": 5,
   "soundEnabled": true,
-  "lastScanTimestamp": 1787767148010,
+  "lastScanTimestamp": 0,
   "mutedPairs": {}
 }

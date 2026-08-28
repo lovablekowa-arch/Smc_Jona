@@ -2,27 +2,22 @@ import fs from 'fs';
 import path from 'path';
 import { AlertHistoryItem, ConfluenceGrade, MarketCategory, SMCSignal, TelegramSettings } from '../src/types';
 import { analyzeAllPairs } from './smcEngine';
-import { formatTelegramFVGTapInMessage, formatTelegramSignalMessage, sendTelegramMessage } from './telegram';
+import { formatTelegramFVGTapInMessage, formatTelegramSignalMessage, sanitizeBotToken, sanitizeChatId, sendTelegramMessage } from './telegram';
 
-// Helper to get safe writable path
-function getWritablePath(filename: string): string {
-  try {
-    const defaultPath = path.join(process.cwd(), filename);
-    // Test write permission
-    fs.accessSync(process.cwd(), fs.constants.W_OK);
-    return defaultPath;
-  } catch {
-    // Fallback to /tmp in serverless environments like Vercel
-    return path.join('/tmp', filename);
-  }
-}
+// Safe writable paths across container and serverless environments
+const PRIMARY_SETTINGS_FILE = path.join(process.cwd(), 'data_settings.json');
+const TMP_SETTINGS_FILE = path.join('/tmp', 'data_settings.json');
 
-const SETTINGS_FILE = getWritablePath('data_settings.json');
-const HISTORY_FILE = getWritablePath('data_history.json');
+const PRIMARY_HISTORY_FILE = path.join(process.cwd(), 'data_history.json');
+const TMP_HISTORY_FILE = path.join('/tmp', 'data_history.json');
+
+// Read default credentials from environment if available or hardcoded defaults
+const ENV_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN || '8683387578:AAG9phaBO0p2lH4JKIlXHGHBlmZq2NBG7SY';
+const ENV_CHAT_ID = process.env.TELEGRAM_CHAT_ID || process.env.VITE_TELEGRAM_CHAT_ID || '8755686322';
 
 const DEFAULT_SETTINGS: TelegramSettings = {
-  botToken: '',
-  chatId: '',
+  botToken: ENV_BOT_TOKEN,
+  chatId: ENV_CHAT_ID,
   enabled: true,
   alertLevels: ['SNIPER', 'MEDIUM', 'WATCHLIST'],
   activeCategories: ['CRYPTO', 'FOREX', 'COMMODITIES', 'SYNTHETICS'],
@@ -34,8 +29,8 @@ const DEFAULT_SETTINGS: TelegramSettings = {
   notifyOnFVGTap: true,
   showIFVG: true,
   fvgTimeframes: ['15M', '30M'],
-  antiDuplicateHours: 6,
-  scanIntervalMinutes: 10,
+  antiDuplicateHours: 2,
+  scanIntervalMinutes: 5,
   soundEnabled: true,
   lastScanTimestamp: 0,
   mutedPairs: {},
@@ -48,44 +43,62 @@ let lastFVGTapSentTime: Record<string, number> = {};
 let latestSignalsCache: SMCSignal[] = [];
 let scanTimer: NodeJS.Timeout | null = null;
 
-// Load persisted files
+// Load persisted files safely
 function loadPersistedData() {
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const data = fs.readFileSync(SETTINGS_FILE, 'utf-8');
-      currentSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
+  // Try primary then tmp
+  for (const filePath of [PRIMARY_SETTINGS_FILE, TMP_SETTINGS_FILE]) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        currentSettings = {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          botToken: parsed.botToken || ENV_BOT_TOKEN || currentSettings.botToken,
+          chatId: parsed.chatId || ENV_CHAT_ID || currentSettings.chatId,
+        };
+        console.log(`[SMC SCANNER] Settings loaded from ${filePath} (Bot configured: ${Boolean(currentSettings.botToken && currentSettings.chatId)})`);
+        break;
+      }
+    } catch (err) {
+      console.warn(`[SMC SCANNER] Could not read settings from ${filePath}:`, err);
     }
-  } catch (err) {
-    console.error('Error loading settings:', err);
   }
 
-  try {
-    if (fs.existsSync(HISTORY_FILE)) {
-      const data = fs.readFileSync(HISTORY_FILE, 'utf-8');
-      alertHistory = JSON.parse(data);
+  // History
+  for (const filePath of [PRIMARY_HISTORY_FILE, TMP_HISTORY_FILE]) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        alertHistory = JSON.parse(raw);
+        break;
+      }
+    } catch (err) {
+      console.warn(`[SMC SCANNER] Could not read history from ${filePath}:`, err);
     }
-  } catch (err) {
-    console.error('Error loading history:', err);
   }
 }
 
 function saveSettings() {
-  try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(currentSettings, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error saving settings:', err);
+  for (const filePath of [PRIMARY_SETTINGS_FILE, TMP_SETTINGS_FILE]) {
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(currentSettings, null, 2), 'utf-8');
+    } catch (err) {
+      // Ignored for read-only layers
+    }
   }
 }
 
 function saveHistory() {
-  try {
-    // Keep max 150 entries
-    if (alertHistory.length > 150) {
-      alertHistory = alertHistory.slice(0, 150);
+  if (alertHistory.length > 150) {
+    alertHistory = alertHistory.slice(0, 150);
+  }
+  for (const filePath of [PRIMARY_HISTORY_FILE, TMP_HISTORY_FILE]) {
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(alertHistory, null, 2), 'utf-8');
+    } catch (err) {
+      // Ignored for read-only layers
     }
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(alertHistory, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Error saving history:', err);
   }
 }
 
@@ -94,9 +107,19 @@ export function getSettings(): TelegramSettings {
 }
 
 export function updateSettings(newSettings: Partial<TelegramSettings>): TelegramSettings {
-  currentSettings = { ...currentSettings, ...newSettings };
+  const cleanToken = sanitizeBotToken(newSettings.botToken ?? currentSettings.botToken);
+  const cleanChat = sanitizeChatId(newSettings.chatId ?? currentSettings.chatId);
+
+  currentSettings = {
+    ...currentSettings,
+    ...newSettings,
+    botToken: cleanToken,
+    chatId: cleanChat,
+  };
+
   saveSettings();
   restartBackgroundScanner();
+  console.log(`[SMC SCANNER] Settings updated. Bot Token: ${cleanToken ? 'DEFINED' : 'EMPTY'}, Chat ID: ${cleanChat || 'EMPTY'}`);
   return currentSettings;
 }
 
@@ -167,7 +190,15 @@ export function unmuteTradePair(pairSymbol: string): { success: boolean; pairSym
   return { success: true, pairSymbol };
 }
 
-export async function executeScan(isManual = false): Promise<{ signals: SMCSignal[]; alertsDispatched: number }> {
+export async function executeScan(
+  isManual = false,
+  customToken?: string,
+  customChatId?: string
+): Promise<{
+  signals: SMCSignal[];
+  alertsDispatched: number;
+  telegramStatus: { enabled: boolean; configured: boolean; lastError?: string };
+}> {
   console.log(`[SMC SCANNER] Executing scan (manual: ${isManual})...`);
   const now = Date.now();
   currentSettings.lastScanTimestamp = now;
@@ -179,9 +210,21 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
     }
   }
 
-  // 1. Analyze all pairs with configured FVG minimum size threshold & ChartPrime volume profile filters
+  // Determine active Telegram credentials
+  const botToken = sanitizeBotToken(customToken || currentSettings.botToken || ENV_BOT_TOKEN);
+  const chatId = sanitizeChatId(customChatId || currentSettings.chatId || ENV_CHAT_ID);
+  const hasTelegram = Boolean(botToken && chatId && (currentSettings.enabled !== false));
+
+  // If credentials were provided on request, update state
+  if (customToken && customChatId) {
+    currentSettings.botToken = botToken;
+    currentSettings.chatId = chatId;
+    saveSettings();
+  }
+
+  // 1. Analyze all pairs with SMC 5-confluences engine
   const rawSignals = await analyzeAllPairs(
-    currentSettings.activePairs.length > 0 ? currentSettings.activePairs : undefined,
+    currentSettings.activePairs && currentSettings.activePairs.length > 0 ? currentSettings.activePairs : undefined,
     currentSettings.minFvgSizePercent || 0.15,
     currentSettings.fvgGapFilterStdev ?? 0.5,
     currentSettings.fvgVolumeProfileBins || 15
@@ -192,17 +235,20 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
     const isMuted = currentSettings.mutedPairs[s.pair] && now < currentSettings.mutedPairs[s.pair];
     return {
       ...s,
-      tradeTaken: !!isMuted,
+      tradeTaken: Boolean(isMuted),
       mutedUntil: currentSettings.mutedPairs[s.pair],
     };
   });
 
   latestSignalsCache = signals;
   let alertsDispatched = 0;
+  let lastTelegramError: string | undefined;
 
-  // 3. Process Telegram Alerts if enabled & credentials present
-  const hasTelegram = currentSettings.botToken && currentSettings.chatId && currentSettings.enabled;
+  console.log(
+    `[SMC SCANNER] Found ${signals.length} active opportunities. Telegram alerts enabled: ${hasTelegram} (Bot: ${botToken ? 'YES' : 'NO'}, Chat: ${chatId || 'NONE'})`
+  );
 
+  // 3. Process Telegram Alerts
   for (const signal of signals) {
     const isGradeAllowed = currentSettings.alertLevels.includes(signal.confluenceGrade);
     const isCategoryAllowed = currentSettings.activeCategories.includes(signal.category);
@@ -212,13 +258,12 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
       continue;
     }
 
-    // Check anti-duplicate cooldown (minimum 2 hours between identical alerts on same pair unless grade changed to SNIPER)
+    // Check anti-duplicate cooldown
     const lastSent = lastAlertSentTime[signal.pair] || 0;
-    const cooldownMs = (currentSettings.antiDuplicateHours || 4) * 60 * 60 * 1000;
+    const cooldownMs = Math.max(1, currentSettings.antiDuplicateHours || 2) * 60 * 60 * 1000;
     const isCooldownActive = now - lastSent < cooldownMs && !isManual;
 
     if (isMuted) {
-      // Log as muted
       continue;
     }
 
@@ -229,18 +274,20 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
 
       if (hasTelegram) {
         const msg = formatTelegramSignalMessage(signal);
-        const res = await sendTelegramMessage(currentSettings.botToken, currentSettings.chatId, msg);
+        const res = await sendTelegramMessage(botToken, chatId, msg);
         telegramSent = res.success;
         telegramError = res.error;
         if (telegramSent) {
           lastAlertSentTime[signal.pair] = now;
           alertsDispatched++;
+        } else {
+          lastTelegramError = telegramError;
         }
       }
 
       // Add to history
       alertHistory.unshift({
-        id: `alert_${signal.id}`,
+        id: `alert_${signal.id}_${now}`,
         timestamp: now,
         signalId: signal.id,
         pair: signal.pair,
@@ -255,9 +302,11 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
         riskRewardRatio: signal.riskRewardRatio,
         telegramSent,
         telegramError,
-        status: telegramSent ? 'DELIVERED' : (hasTelegram ? 'FAILED' : 'LOCAL_ONLY'),
+        status: telegramSent ? 'DELIVERED' : hasTelegram ? 'FAILED' : 'LOCAL_ONLY',
         alertType: 'SIGNAL_CREATED',
-        detailsSummary: `${signal.conditionsMetCount}/5 Confluences | Entrée ${signal.entryPrice > 500 ? signal.entryPrice.toFixed(2) : signal.entryPrice.toFixed(4)} | TP1 ${signal.tp1 > 500 ? signal.tp1.toFixed(2) : signal.tp1.toFixed(4)}`,
+        detailsSummary: `${signal.conditionsMetCount}/5 Confluences | Entrée ${
+          signal.entryPrice > 500 ? signal.entryPrice.toFixed(2) : signal.entryPrice.toFixed(4)
+        } | TP1 ${signal.tp1 > 500 ? signal.tp1.toFixed(2) : signal.tp1.toFixed(4)}`,
       });
     }
 
@@ -267,7 +316,7 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
 
     if (shouldNotifyFVGTap && !isMuted && recentFvg) {
       const lastTapSent = lastFVGTapSentTime[signal.pair] || 0;
-      const tapCooldownMs = 90 * 60 * 1000; // 1h30 cooldown between FVG tap notifications on same pair
+      const tapCooldownMs = 60 * 60 * 1000; // 1h cooldown
       const isTapCooldownActive = now - lastTapSent < tapCooldownMs && !isManual;
 
       if (!isTapCooldownActive) {
@@ -276,12 +325,14 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
 
         if (hasTelegram) {
           const tapMsg = formatTelegramFVGTapInMessage(signal, recentFvg);
-          const res = await sendTelegramMessage(currentSettings.botToken, currentSettings.chatId, tapMsg);
+          const res = await sendTelegramMessage(botToken, chatId, tapMsg);
           telegramSent = res.success;
           telegramError = res.error;
           if (telegramSent) {
             lastFVGTapSentTime[signal.pair] = now;
             alertsDispatched++;
+          } else {
+            lastTelegramError = telegramError;
           }
         }
 
@@ -302,9 +353,11 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
           riskRewardRatio: signal.riskRewardRatio,
           telegramSent,
           telegramError,
-          status: telegramSent ? 'DELIVERED' : (hasTelegram ? 'FAILED' : 'LOCAL_ONLY'),
+          status: telegramSent ? 'DELIVERED' : hasTelegram ? 'FAILED' : 'LOCAL_ONLY',
           alertType: 'FVG_TAP_IN',
-          detailsSummary: `🎯 RETRACEMENT DANS LE FVG (${recentFvg.timeframe} - ${recentFvg.fvgFillPercentage ?? 50}% comblé | POC: ${recentFvg.pocPrice ?? 'N/A'})`,
+          detailsSummary: `🎯 RETRACEMENT DANS LE FVG (${recentFvg.timeframe} - ${recentFvg.fvgFillPercentage ?? 50}% comblé | POC: ${
+            recentFvg.pocPrice ?? 'N/A'
+          })`,
         });
       }
     }
@@ -312,14 +365,25 @@ export async function executeScan(isManual = false): Promise<{ signals: SMCSigna
 
   saveHistory();
   saveSettings();
-  return { signals, alertsDispatched };
+
+  return {
+    signals,
+    alertsDispatched,
+    telegramStatus: {
+      enabled: currentSettings.enabled !== false,
+      configured: Boolean(botToken && chatId),
+      lastError: lastTelegramError,
+    },
+  };
 }
 
 export function startBackgroundScanner() {
   loadPersistedData();
-  const intervalMs = Math.max(1, currentSettings.scanIntervalMinutes || 10) * 60 * 1000;
+  const intervalMs = Math.max(1, currentSettings.scanIntervalMinutes || 5) * 60 * 1000;
 
-  console.log(`[SMC SCANNER] Background 24/7 Scanner started. Scanning every ${currentSettings.scanIntervalMinutes} minutes (${intervalMs}ms).`);
+  console.log(
+    `[SMC SCANNER] Background 24/7 Scanner active. Scanning every ${currentSettings.scanIntervalMinutes || 5} min.`
+  );
 
   // Initial immediate scan
   executeScan(false).catch((err) => console.error('[SMC SCANNER] Initial scan error:', err));
@@ -332,8 +396,8 @@ export function startBackgroundScanner() {
 
 export function restartBackgroundScanner() {
   if (scanTimer) clearInterval(scanTimer);
-  const intervalMs = Math.max(1, currentSettings.scanIntervalMinutes || 10) * 60 * 1000;
-  console.log(`[SMC SCANNER] Restarting background scanner with interval ${currentSettings.scanIntervalMinutes} minutes.`);
+  const intervalMs = Math.max(1, currentSettings.scanIntervalMinutes || 5) * 60 * 1000;
+  console.log(`[SMC SCANNER] Restarting background scanner with interval ${currentSettings.scanIntervalMinutes || 5} min.`);
   scanTimer = setInterval(() => {
     executeScan(false).catch((err) => console.error('[SMC SCANNER] Scheduled scan error:', err));
   }, intervalMs);

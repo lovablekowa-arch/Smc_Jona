@@ -1,15 +1,37 @@
 import { FVGInfo, SMCSignal } from '../src/types';
 
-// Helper to escape HTML characters for Telegram Bot API
+// Normalize Bot Token (strip 'bot' prefix if user pasted 'bot123456:ABC...')
+export function sanitizeBotToken(token: string | undefined | null): string {
+  if (!token) return '';
+  let clean = token.toString().trim();
+  // Remove wrapping quotes
+  clean = clean.replace(/^["']|["']$/g, '');
+  // If token starts with 'bot' followed by digits and a colon, strip 'bot'
+  if (/^bot\d+:/i.test(clean)) {
+    clean = clean.replace(/^bot/i, '');
+  }
+  return clean.replace(/\s+/g, '');
+}
+
+// Normalize Chat ID (trim, remove quotes, keep minus sign if present)
+export function sanitizeChatId(chatId: string | number | undefined | null): string {
+  if (chatId === undefined || chatId === null) return '';
+  let clean = chatId.toString().trim();
+  clean = clean.replace(/^["']|["']$/g, '');
+  return clean.replace(/\s+/g, '');
+}
+
+// Helper to escape HTML characters strictly for Telegram Bot API
 function escapeHtml(str: string | number | undefined | null): string {
   if (str === undefined || str === null) return '';
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-// Strip HTML tags for fallback delivery
+// Strip HTML tags for 100% resilient plain text delivery
 function stripHtmlTags(html: string): string {
   return html
     .replace(/<[^>]*>/g, '')
@@ -19,23 +41,44 @@ function stripHtmlTags(html: string): string {
     .replace(/&quot;/g, '"');
 }
 
+// Translate Telegram API error messages into clear French action items
+function translateTelegramError(errorDesc?: string): string {
+  if (!errorDesc) return 'Erreur inconnue de l\'API Telegram';
+  const lower = errorDesc.toLowerCase();
+  if (lower.includes('unauthorized') || lower.includes('invalid token')) {
+    return 'Token Bot invalide. Vérifiez le token copié depuis @BotFather.';
+  }
+  if (lower.includes('chat not found')) {
+    return 'Chat ID introuvable. Avez-vous envoyé un message ou cliqué sur DÉMARRER (/start) sur votre Bot ?';
+  }
+  if (lower.includes('bot was blocked by the user')) {
+    return 'Le bot a été bloqué dans Telegram. Débloquez-le et appuyez sur /start.';
+  }
+  if (lower.includes('bot is not a member of the channel') || lower.includes('not enough rights')) {
+    return 'Le bot doit être ajouté en tant qu\'Administrateur dans votre canal ou groupe.';
+  }
+  return errorDesc;
+}
+
 export function formatTelegramSignalMessage(signal: SMCSignal): string {
   const isBuy = signal.direction === 'BUY';
   const dirText = isBuy ? '🟢 <b>ACHAT (LONG)</b>' : '🔴 <b>VENTE (SHORT)</b>';
-  
-  const gradeHeader = signal.confluenceGrade === 'SNIPER'
-    ? `🎯 <b>SIGNAL SNIPER (95% - 100%)</b> — ${signal.conditionsMetCount}/5 Confluences ⭐️`
-    : signal.confluenceGrade === 'MEDIUM'
-    ? `⚡ <b>BON SETUP (75% - 90%)</b> — ${signal.conditionsMetCount}/5 Confluences`
-    : `👁️ <b>À SURVEILLER (60% - 70%)</b> — ${signal.conditionsMetCount}/5 Confluences`;
 
-  const categoryLabel = signal.category === 'CRYPTO'
-    ? '🪙 Crypto'
-    : signal.category === 'FOREX'
-    ? '💱 Forex Institutionnel'
-    : signal.category === 'COMMODITIES'
-    ? '🥇 Matières Premières'
-    : '⚡ Deriv Synthetics';
+  const gradeHeader =
+    signal.confluenceGrade === 'SNIPER'
+      ? `🎯 <b>SIGNAL SNIPER (95% - 100%)</b> — ${signal.conditionsMetCount}/5 Confluences ⭐️`
+      : signal.confluenceGrade === 'MEDIUM'
+      ? `⚡ <b>BON SETUP (75% - 90%)</b> — ${signal.conditionsMetCount}/5 Confluences`
+      : `👁️ <b>À SURVEILLER (60% - 70%)</b> — ${signal.conditionsMetCount}/5 Confluences`;
+
+  const categoryLabel =
+    signal.category === 'CRYPTO'
+      ? '🪙 Crypto'
+      : signal.category === 'FOREX'
+      ? '💱 Forex Institutionnel'
+      : signal.category === 'COMMODITIES'
+      ? '🥇 Matières Premières'
+      : '⚡ Deriv Synthetics';
 
   const c1 = signal.confluences.condition1_HTFTrend;
   const c2 = signal.confluences.condition2_FVG_OB;
@@ -58,7 +101,7 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
     ? `• FVG ${fvgAncient.timeframe} Ancien (${fvgAncient.ageHours}h): DÉJÀ MITIGÉ (100% comblé - ${fvgAncient.sizePercent}%) ⏳`
     : '• FVG Ancien: Aucun résiduel';
 
-  const retracementText = c3.retracementConfirmation
+  const retracementText = c3?.retracementConfirmation
     ? `\n   🔥 <i>${escapeHtml(c3.retracementConfirmation.candleDescription)}</i>`
     : '';
 
@@ -66,9 +109,9 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
     ? `\n5️⃣ <b>Filtre RSI 10 (H1 &amp; M30):</b> ${c5.satisfied ? '✅ VALIDÉ' : '⚠️ FILTRÉ'}\n   <i>${escapeHtml(c5.rsiInfo.summary)}</i>`
     : '';
 
-  const sweepText = c4.sweep ? c4.sweep.description : 'Balayage en formation';
-  const tp1Target = c4.restingTargets[0] ? `${c4.restingTargets[0].label}` : 'TP1 Interne';
-  const tp2Target = c4.restingTargets[1] ? `${c4.restingTargets[1].label}` : 'TP2 Majeur';
+  const sweepText = c4?.sweep ? c4.sweep.description : 'Balayage en formation';
+  const tp1Target = c4?.restingTargets?.[0] ? `${c4.restingTargets[0].label}` : 'TP1 Interne';
+  const tp2Target = c4?.restingTargets?.[1] ? `${c4.restingTargets[1].label}` : 'TP2 Majeur';
 
   const pCurrent = signal.currentPrice > 500 ? signal.currentPrice.toFixed(2) : signal.currentPrice.toFixed(4);
   const pEntry = signal.entryPrice > 500 ? signal.entryPrice.toFixed(2) : signal.entryPrice.toFixed(4);
@@ -83,7 +126,7 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
       const ob = signal.pathObstacleAnalysis.primaryObstacle;
       roadmapText = `\n⚠️ <b>OBSTACLE DÉTECTÉ SUR LE CHEMIN :</b>\n🛑 <b>${escapeHtml(ob.label)}</b> à <code>${ob.priceLevel}</code> (${ob.volumeAmount ? `Vol: ${ob.volumeAmount}` : ''})\n👉 <i>Sécurisation ou TP partiel conseillé à ce niveau avant ${ob.blocksTarget === 'BEFORE_TP1' ? 'TP1' : 'TP2'}.</i>\n`;
     } else {
-      roadmapText = `\n🟢 <b>CHEMIN 100% OUVERT :</b>\n✨ <i>Voie libre vers TP1 & TP2 (Aucun FVG baissier/haussier opposé bloquant).</i>\n`;
+      roadmapText = `\n🟢 <b>CHEMIN 100% OUVERT :</b>\n✨ <i>Voie libre vers TP1 &amp; TP2 (Aucun FVG opposé bloquant).</i>\n`;
     }
   }
 
@@ -106,7 +149,7 @@ export function formatTelegramSignalMessage(signal: SMCSignal): string {
    <i>${escapeHtml(fvgRecentText)}</i>
    <i>${escapeHtml(ifvgText)}</i>
    <i>${escapeHtml(fvgAncientText)}</i>
-3️⃣ <b>Fibonacci &amp; Bougie Confirmation Retracement:</b> ${c3.satisfied ? '✅ VALIDÉ' : '⚠️ NEUTRE'}
+3️⃣ <b>Fibonacci &amp; Bougie Confirmation:</b> ${c3.satisfied ? '✅ VALIDÉ' : '⚠️ NEUTRE'}
    <i>${escapeHtml(c3.summary)}</i>${retracementText}
 4️⃣ <b>Balayage Liquidité Sweep 💧:</b> ${c4.satisfied ? '✅ VALIDÉ' : '⚠️ FORMATION'}
    <i>${escapeHtml(sweepText)}</i>${rsiText}
@@ -119,13 +162,14 @@ export function formatTelegramFVGTapInMessage(signal: SMCSignal, fvg: FVGInfo): 
   const dirText = isBuy ? '🟢 <b>ACHAT (LONG)</b>' : '🔴 <b>VENTE (SHORT)</b>';
   const isTestingPOC = fvg.fvgRetracementState === 'TESTING_POC';
 
-  const categoryLabel = signal.category === 'CRYPTO'
-    ? '🪙 Crypto'
-    : signal.category === 'FOREX'
-    ? '💱 Forex'
-    : signal.category === 'COMMODITIES'
-    ? '🥇 Matières Premières'
-    : '⚡ Deriv Synthetics';
+  const categoryLabel =
+    signal.category === 'CRYPTO'
+      ? '🪙 Crypto'
+      : signal.category === 'FOREX'
+      ? '💱 Forex'
+      : signal.category === 'COMMODITIES'
+      ? '🥇 Matières Premières'
+      : '⚡ Deriv Synthetics';
 
   const fvgLowStr = fvg.low > 500 ? fvg.low.toFixed(2) : fvg.low.toFixed(4);
   const fvgHighStr = fvg.high > 500 ? fvg.high.toFixed(2) : fvg.high.toFixed(4);
@@ -165,13 +209,15 @@ export async function sendTelegramMessage(
   chatId: string,
   htmlText: string
 ): Promise<{ success: boolean; error?: string }> {
-  if (!botToken || !chatId) {
-    return { success: false, error: 'Token Bot ou Chat ID manquant' };
+  const cleanToken = sanitizeBotToken(botToken);
+  const cleanChatId = sanitizeChatId(chatId);
+
+  if (!cleanToken || !cleanChatId) {
+    return { success: false, error: 'Token Bot ou Chat ID manquant ou invalide.' };
   }
 
-  const cleanToken = botToken.toString().replace(/\s+/g, '');
-  const cleanChatId = chatId.toString().replace(/\s+/g, '');
   const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
+  console.log(`[Telegram API] Attempting to send message to Chat ID "${cleanChatId}"...`);
 
   try {
     // 1ère tentative : Envoi en mode HTML formatté
@@ -184,17 +230,18 @@ export async function sendTelegramMessage(
         parse_mode: 'HTML',
         disable_web_page_preview: true,
       }),
-      signal: AbortSignal.timeout(9000),
+      signal: AbortSignal.timeout(10000),
     });
 
-    const data = (await res.json()) as { ok: boolean; description?: string };
+    const data = (await res.json()) as { ok: boolean; description?: string; error_code?: number };
     if (data.ok) {
+      console.log(`[Telegram API] Message successfully delivered to ${cleanChatId}`);
       return { success: true };
     }
 
-    console.warn('[Telegram API] Failed with HTML parse_mode:', data.description);
+    console.warn(`[Telegram API] HTML delivery failed (${data.description}), retrying with Plain Text fallback...`);
 
-    // 2ème tentative (Fallback de sécurité garanti) : Envoi en texte brut sans formatage pour ne JAMAIS perdre l'alerte
+    // 2ème tentative (Fallback de sécurité garanti) : Envoi en texte brut sans formatage
     const plainText = stripHtmlTags(htmlText);
     const retryRes = await fetch(url, {
       method: 'POST',
@@ -204,27 +251,35 @@ export async function sendTelegramMessage(
         text: plainText,
         disable_web_page_preview: true,
       }),
-      signal: AbortSignal.timeout(9000),
+      signal: AbortSignal.timeout(10000),
     });
 
     const retryData = (await retryRes.json()) as { ok: boolean; description?: string };
     if (retryData.ok) {
+      console.log(`[Telegram API] Fallback plain text successfully delivered to ${cleanChatId}`);
       return { success: true };
     }
 
-    return { success: false, error: retryData.description || data.description || 'Erreur API Telegram' };
+    const translated = translateTelegramError(retryData.description || data.description);
+    console.error(`[Telegram API] Error for Chat ID ${cleanChatId}:`, translated);
+    return { success: false, error: translated };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Impossible de contacter Telegram' };
+    console.error(`[Telegram API] Network error contacting Telegram for ${cleanChatId}:`, err.message);
+    return { success: false, error: `Erreur réseau Telegram : ${err.message}` };
   }
 }
 
-export async function sendTelegramTestAlert(botToken: string, chatId: string): Promise<{ success: boolean; error?: string }> {
-  const testMessage = `🤖 <b>TEST CONNEXION BOT TELEGRAM — SMC &amp; LIQUIDITY</b>
+export async function sendTelegramTestAlert(
+  botToken: string,
+  chatId: string
+): Promise<{ success: boolean; error?: string }> {
+  const testMessage = `🤖 <b>TEST DE CONNEXION RÉUSSI !</b>
 ━━━━━━━━━━━━━━━━━━━━
-✅ <b>Félicitations !</b> Votre Bot Telegram est parfaitement configuré.
-📡 <b>Mode:</b> Scan automatique 24/7 en arrière-plan.
-💧 <b>Signaux:</b> Confluences SMC, FVG Récent/Ancien, POC Volume &amp; Balayage Liquidité.
+✅ <b>Félicitations !</b> Votre Bot Telegram est parfaitement connecté au Scanner SMC 24/7.
+📡 <b>Mode:</b> Alertes automatiques en direct &amp; Arrière-plan.
+🎯 <b>Conditions:</b> 5/5 Confluences Sniper (1D/4H/30M + FVG/POC + Retracement + Sweep 💧 + RSI 10).
 
-Vous recevrez désormais vos alertes directement sur votre Telegram sans aucune interruption !`;
+Vous recevrez désormais tous vos signaux institutionnels directement sur votre smartphone ! 📱`;
+
   return sendTelegramMessage(botToken, chatId, testMessage);
 }
